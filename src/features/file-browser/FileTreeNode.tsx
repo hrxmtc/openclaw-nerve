@@ -1,0 +1,114 @@
+import { ChevronRight, ChevronDown, Loader2 } from 'lucide-react';
+import { FileIcon, FolderIcon } from './utils/fileIcons';
+import { isImageFile } from './utils/fileTypes';
+import type { TreeEntry } from './types';
+
+interface FileTreeNodeProps {
+  entry: TreeEntry;
+  depth: number;
+  expandedPaths: Set<string>;
+  selectedPath: string | null;
+  loadingPaths: Set<string>;
+  onToggleDir: (path: string) => void;
+  onOpenFile: (path: string) => void;
+  onSelect: (path: string) => void;
+}
+
+export function FileTreeNode({
+  entry,
+  depth,
+  expandedPaths,
+  selectedPath,
+  loadingPaths,
+  onToggleDir,
+  onOpenFile,
+  onSelect,
+}: FileTreeNodeProps) {
+  const isDir = entry.type === 'directory';
+  const isExpanded = expandedPaths.has(entry.path);
+  const isSelected = selectedPath === entry.path;
+  const isLoading = loadingPaths.has(entry.path);
+
+  const handleClick = () => {
+    onSelect(entry.path);
+    if (isDir) {
+      onToggleDir(entry.path);
+    }
+  };
+
+  const canOpen = !isDir && (!entry.binary || isImageFile(entry.name));
+
+  const handleDoubleClick = () => {
+    if (canOpen) {
+      onOpenFile(entry.path);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      if (isDir) {
+        onToggleDir(entry.path);
+      } else if (canOpen) {
+        onOpenFile(entry.path);
+      }
+    }
+  };
+
+  return (
+    <div role="treeitem" aria-expanded={isDir ? isExpanded : undefined} aria-selected={isSelected}>
+      <div
+        className={`flex items-center gap-1 py-[2px] pr-2 cursor-pointer select-none text-[12px] leading-5 hover:bg-muted/50 ${
+          isSelected ? 'bg-muted/70 text-foreground' : 'text-muted-foreground'
+        } ${entry.binary && !canOpen ? 'opacity-50' : ''}`}
+        style={{ paddingLeft: depth * 16 + 8 }}
+        onClick={handleClick}
+        onDoubleClick={handleDoubleClick}
+        onKeyDown={handleKeyDown}
+        tabIndex={0}
+        title={entry.path}
+      >
+        {/* Expand/collapse chevron for directories */}
+        {isDir ? (
+          isLoading ? (
+            <Loader2 className="shrink-0 animate-spin text-muted-foreground" size={12} />
+          ) : isExpanded ? (
+            <ChevronDown className="shrink-0 text-muted-foreground" size={12} />
+          ) : (
+            <ChevronRight className="shrink-0 text-muted-foreground" size={12} />
+          )
+        ) : (
+          <span className="shrink-0 w-3" /> /* spacer for alignment */
+        )}
+
+        {/* Icon */}
+        {isDir ? (
+          <FolderIcon open={isExpanded} />
+        ) : (
+          <FileIcon name={entry.name} />
+        )}
+
+        {/* Name */}
+        <span className="truncate">{entry.name}</span>
+      </div>
+
+      {/* Children */}
+      {isDir && isExpanded && entry.children && (
+        <div role="group">
+          {entry.children.map((child) => (
+            <FileTreeNode
+              key={child.path}
+              entry={child}
+              depth={depth + 1}
+              expandedPaths={expandedPaths}
+              selectedPath={selectedPath}
+              loadingPaths={loadingPaths}
+              onToggleDir={onToggleDir}
+              onOpenFile={onOpenFile}
+              onSelect={onSelect}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}

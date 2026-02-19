@@ -1,0 +1,64 @@
+/**
+ * useWorkspaceFile — Read/write a single workspace file by key.
+ */
+
+import { useState, useCallback, useRef } from 'react';
+
+interface WorkspaceFileState {
+  content: string | null;
+  isLoading: boolean;
+  error: string | null;
+  exists: boolean;
+}
+
+/** Hook to read and write a single file in the agent workspace via the gateway API. */
+export function useWorkspaceFile() {
+  const [state, setState] = useState<WorkspaceFileState>({
+    content: null,
+    isLoading: false,
+    error: null,
+    exists: false,
+  });
+  const abortRef = useRef<AbortController>(undefined);
+
+  const load = useCallback(async (key: string) => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    setState(s => ({ ...s, isLoading: true, error: null }));
+    try {
+      const res = await fetch(`/api/workspace/${key}`, { signal: controller.signal });
+      if (res.status === 404) {
+        setState({ content: null, isLoading: false, error: null, exists: false });
+        return;
+      }
+      const data = await res.json() as { ok: boolean; content?: string; error?: string };
+      if (!data.ok) throw new Error(data.error || 'Failed to load');
+      setState({ content: data.content ?? '', isLoading: false, error: null, exists: true });
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') return;
+      setState(s => ({ ...s, isLoading: false, error: (err as Error).message }));
+    }
+  }, []);
+
+  const save = useCallback(async (key: string, content: string): Promise<boolean> => {
+    setState(s => ({ ...s, isLoading: true, error: null }));
+    try {
+      const res = await fetch(`/api/workspace/${key}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content }),
+      });
+      const data = await res.json() as { ok: boolean; error?: string };
+      if (!data.ok) throw new Error(data.error || 'Failed to save');
+      setState({ content, isLoading: false, error: null, exists: true });
+      return true;
+    } catch (err) {
+      setState(s => ({ ...s, isLoading: false, error: (err as Error).message }));
+      return false;
+    }
+  }, []);
+
+  return { ...state, load, save };
+}

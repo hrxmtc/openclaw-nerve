@@ -1,0 +1,262 @@
+# Configuration
+
+Nerve is configured via a `.env` file in the project root. All variables have sensible defaults — only `GATEWAY_TOKEN` is strictly required.
+
+---
+
+## Setup Wizard
+
+The interactive setup wizard is the recommended way to configure Nerve:
+
+```bash
+npm run setup               # Interactive setup (5 steps)
+npm run setup -- --check    # Validate existing config & test gateway
+npm run setup -- --defaults # Non-interactive with auto-detected values
+npm run setup -- --help     # Show help
+```
+
+### Wizard Steps
+
+The wizard walks through **5 sections**:
+
+#### 1. Gateway Connection
+
+Connects Nerve to your OpenClaw gateway. The wizard auto-detects the gateway token from:
+1. Existing `.env` (`GATEWAY_TOKEN`)
+2. Environment variable `OPENCLAW_GATEWAY_TOKEN`
+3. `~/.openclaw/openclaw.json` (auto-detected)
+
+Tests the connection before proceeding. If the gateway is unreachable, you can continue anyway.
+
+#### 2. Agent Identity
+
+Sets the `AGENT_NAME` displayed in the UI.
+
+#### 3. Access Mode
+
+Determines how you'll access Nerve. The wizard auto-configures `HOST`, `ALLOWED_ORIGINS`, `WS_ALLOWED_HOSTS`, and `CSP_CONNECT_EXTRA` based on your choice:
+
+| Mode | Bind | Description |
+|------|------|-------------|
+| **Localhost** | `127.0.0.1` | Only accessible from this machine. Safest option. |
+| **Tailscale** | `0.0.0.0` | Accessible from your Tailscale network. Auto-detected if Tailscale is running. Sets CORS + CSP for your Tailscale IP. |
+| **Network (LAN)** | `0.0.0.0` | Accessible from your local network. Prompts for your LAN IP. Sets CORS + CSP for that IP. |
+| **Custom** | Manual | Full manual control: custom port, bind address, HTTPS certificate generation, CORS. |
+
+**HTTPS (Custom mode only):** The wizard can generate self-signed certificates via `openssl` and configure `SSL_PORT`.
+
+#### 4. TTS Configuration (Optional)
+
+Prompts for optional API keys:
+- `OPENAI_API_KEY` — enables OpenAI TTS + Whisper transcription
+- `REPLICATE_API_TOKEN` — enables Qwen TTS via Replicate (warns if `ffmpeg` is missing)
+
+Edge TTS always works without any keys.
+
+#### 5. Advanced Settings (Optional)
+
+Custom file paths for `MEMORY_PATH`, `MEMORY_DIR`, `SESSIONS_DIR`. Most users skip this.
+
+### Modes Summary
+
+| Flag | Behavior |
+|------|----------|
+| *(none)* | Full interactive wizard. If `.env` exists, asks whether to update or start fresh. |
+| `--check` | Validates all config values, tests gateway connectivity, and exits. Non-destructive. |
+| `--defaults` | Auto-detects gateway token, applies defaults for everything else, writes `.env`. No prompts. |
+
+The wizard backs up existing `.env` files (e.g. `.env.bak.1708100000000`) before overwriting and applies `chmod 600` to both `.env` and backup files.
+
+---
+
+## Environment Variables
+
+### Server
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `3080` | HTTP server port |
+| `SSL_PORT` | `3443` | HTTPS server port (requires certificates at `certs/cert.pem` and `certs/key.pem`) |
+| `HOST` | `127.0.0.1` | Bind address. Set to `0.0.0.0` for network access. **Warning:** exposes the API to the network |
+
+```env
+PORT=3080
+SSL_PORT=3443
+HOST=127.0.0.1
+```
+
+### Gateway (Required)
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `GATEWAY_TOKEN` | — | **Yes** | Authentication token for the OpenClaw gateway. Found in `~/.openclaw/openclaw.json` or via `openclaw gateway status` |
+| `GATEWAY_URL` | `http://127.0.0.1:18789` | No | Gateway HTTP endpoint URL |
+
+```env
+GATEWAY_TOKEN=your-token-here
+GATEWAY_URL=http://127.0.0.1:18789
+```
+
+> **Note:** `OPENCLAW_GATEWAY_TOKEN` is also accepted as a fallback for `GATEWAY_TOKEN`.
+
+### Agent Identity
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AGENT_NAME` | `Agent` | Display name shown in the UI header and server info |
+
+```env
+AGENT_NAME=Friday
+```
+
+### API Keys (Optional)
+
+| Variable | Description |
+|----------|-------------|
+| `OPENAI_API_KEY` | Enables OpenAI TTS (multiple voices) and Whisper audio transcription |
+| `REPLICATE_API_TOKEN` | Enables Replicate-hosted TTS models (e.g. Qwen TTS). Requires `ffmpeg` for WAV→MP3 |
+
+```env
+OPENAI_API_KEY=sk-...
+REPLICATE_API_TOKEN=r8_...
+```
+
+TTS provider fallback chain (when no explicit provider is requested):
+1. **OpenAI** — if `OPENAI_API_KEY` is set
+2. **Replicate** — if `REPLICATE_API_TOKEN` is set
+3. **Edge TTS** — always available, no API key needed (default for new installs)
+
+### Speech-to-Text (STT)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `STT_PROVIDER` | `openai` | STT provider: `openai` (requires `OPENAI_API_KEY`) or `local` (whisper.cpp, no API key needed) |
+| `WHISPER_MODEL` | `tiny.en` | Local whisper model: `tiny.en` (75 MB), `base.en` (142 MB), or `small.en` (466 MB) |
+| `WHISPER_MODEL_DIR` | `~/.nerve/models/` | Directory for downloaded whisper model files |
+
+```env
+# Use local speech-to-text (no API key needed)
+STT_PROVIDER=local
+WHISPER_MODEL=tiny.en
+```
+
+Local STT requires `ffmpeg` for audio format conversion (webm/ogg → 16kHz mono WAV). The installer handles this automatically. Models are downloaded from HuggingFace on first use.
+
+### Network & Security
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ALLOWED_ORIGINS` | *(localhost only)* | Additional CORS origins, comma-separated. Normalised via `URL` constructor; `"null"` origins are rejected |
+| `CSP_CONNECT_EXTRA` | *(none)* | Additional CSP `connect-src` entries, space-separated. Only `http://`, `https://`, `ws://`, `wss://` schemes accepted. Semicolons and newlines are stripped to prevent directive injection |
+| `WS_ALLOWED_HOSTS` | `localhost,127.0.0.1,::1` | Additional WebSocket proxy allowed hostnames, comma-separated |
+| `TRUSTED_PROXIES` | `127.0.0.1,::1,::ffff:127.0.0.1` | IP addresses trusted to set `X-Forwarded-For` / `X-Real-IP` headers, comma-separated |
+
+```env
+# Tailscale example
+ALLOWED_ORIGINS=http://100.64.0.5:3080
+CSP_CONNECT_EXTRA=http://100.64.0.5:3080 ws://100.64.0.5:3080
+WS_ALLOWED_HOSTS=100.64.0.5
+
+# Behind nginx reverse proxy
+TRUSTED_PROXIES=127.0.0.1,::1,10.0.0.1
+```
+
+### File Paths
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MEMORY_PATH` | `~/.openclaw/workspace/MEMORY.md` | Path to the agent's long-term memory file |
+| `MEMORY_DIR` | `~/.openclaw/workspace/memory/` | Directory for daily memory files (`YYYY-MM-DD.md`) |
+| `SESSIONS_DIR` | `~/.openclaw/agents/main/sessions/` | Session transcript directory (scanned for token usage) |
+| `USAGE_FILE` | `~/.openclaw/token-usage.json` | Persistent cumulative token usage data |
+| `WORKSPACE_ROOT` | *(auto-detected)* | Allowed base directory for git workdir registration. Auto-derived from `git worktree list` or parent of `process.cwd()` |
+
+```env
+MEMORY_PATH=/custom/path/MEMORY.md
+MEMORY_DIR=/custom/path/memory/
+SESSIONS_DIR=/custom/path/sessions/
+```
+
+### TTS Cache
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TTS_CACHE_TTL_MS` | `3600000` (1 hour) | Time-to-live for cached TTS audio in milliseconds |
+| `TTS_CACHE_MAX` | `200` | Maximum number of cached TTS entries (in-memory LRU) |
+
+```env
+TTS_CACHE_TTL_MS=7200000
+TTS_CACHE_MAX=500
+```
+
+### Development
+
+| Variable | Description |
+|----------|-------------|
+| `NODE_ENV` | Set to `development` to enable the `POST /api/events/test` debug endpoint and verbose error logging |
+
+---
+
+## HTTPS
+
+Nerve automatically starts an HTTPS server on `SSL_PORT` when certificates exist at:
+
+```
+certs/cert.pem    # Certificate
+certs/key.pem     # Private key
+```
+
+Generate self-signed certificates:
+
+```bash
+mkdir -p certs
+openssl req -x509 -newkey rsa:2048 \
+  -keyout certs/key.pem -out certs/cert.pem \
+  -days 365 -nodes -subj '/CN=localhost'
+```
+
+Or use the setup wizard's Custom access mode, which generates them automatically if `openssl` is available.
+
+> **Why HTTPS?** Browser microphone access (`getUserMedia`) requires a [secure context](https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts). On `localhost` this works over HTTP, but network access requires HTTPS.
+
+---
+
+## Minimal `.env` Example
+
+```env
+GATEWAY_TOKEN=abc123def456
+```
+
+Everything else uses defaults. This is sufficient for local-only usage.
+
+## Full `.env` Example
+
+```env
+# Gateway (required)
+GATEWAY_TOKEN=abc123def456
+GATEWAY_URL=http://127.0.0.1:18789
+
+# Server
+PORT=3080
+SSL_PORT=3443
+HOST=0.0.0.0
+AGENT_NAME=Friday
+
+# API Keys
+OPENAI_API_KEY=sk-...
+REPLICATE_API_TOKEN=r8_...
+
+# Network (Tailscale example)
+ALLOWED_ORIGINS=http://100.64.0.5:3080
+CSP_CONNECT_EXTRA=http://100.64.0.5:3080 ws://100.64.0.5:3080
+WS_ALLOWED_HOSTS=100.64.0.5
+
+# TTS Cache
+TTS_CACHE_TTL_MS=3600000
+TTS_CACHE_MAX=200
+
+# Custom Paths (optional)
+MEMORY_PATH=/home/user/.openclaw/workspace/MEMORY.md
+MEMORY_DIR=/home/user/.openclaw/workspace/memory/
+SESSIONS_DIR=/home/user/.openclaw/agents/main/sessions/
+```

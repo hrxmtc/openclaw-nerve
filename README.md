@@ -1,0 +1,119 @@
+<div align="center">
+
+<img src="docs/nerve-logo-animated.svg" alt="Nerve" width="200" />
+
+# Nerve
+
+**The cockpit for your [OpenClaw](https://github.com/openclaw/openclaw) agents.**
+
+[![MIT License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+![Node 22+](https://img.shields.io/badge/node-%3E%3D22-brightgreen)
+
+</div>
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/daggerhashimoto/openclaw-nerve/master/install.sh | bash
+```
+
+## What is Nerve?
+
+You can already chat with your OpenClaw agent through webchat, Telegram, WhatsApp, Discord. Nerve is what you open when chatting isn't enough.
+
+Nerve is a self-hosted cockpit for [OpenClaw](https://github.com/openclaw/openclaw) agents. Voice conversations, live workspace editing, inline charts, cron scheduling, and full token-level visibility. One install script. Running in 30 seconds.
+
+## Why Nerve?
+
+Messaging channels are great for chatting. But you can't watch charts render in real-time, edit your agent's workspace mid-conversation, browse its files, or monitor token spend from a Telegram window. Nerve gives you the full picture.
+
+<div align="center">
+
+![Screenshot](docs/screenshot.png)
+
+</div>
+
+## What makes it different
+
+### Voice that actually works
+Talk to your agent. It talks back. Wake-word activation, local Whisper transcription (no API key needed), multi-provider TTS with Edge, OpenAI, and Replicate. Not a gimmick, a daily driver.
+
+### Live charts from a chat message
+Your agent can drop interactive TradingView charts, candlestick plots, and data visualizations directly into the conversation. Say "show me gold this year" and get a real chart, not a code block.
+
+### Full workspace visibility
+Your agent's memory, personality, tools, daily logs. All visible, all editable, all live. Change SOUL.md while it's mid-conversation. No restarts, no file hunting, no guessing what it remembers.
+
+### Cron and scheduling from the UI
+Create recurring jobs and one-shot reminders. Every scheduled run shows up as its own session in the sidebar. You can watch it execute live, read the full transcript, and see exactly what it did.
+
+## Everything else
+
+| | |
+|---|---|
+| **Streaming chat** | Markdown, syntax highlighting, diff views, image paste, file previews. All rendering as it streams |
+| **File browser** | Browse your workspace, open files in tabs, edit with syntax highlighting. Real-time sync when your agent edits files |
+| **Multi-session** | Session tree with sub-agents, per-session model overrides, unread indicators |
+| **Sub-agents** | Spawn background workers with custom models and reasoning levels |
+| **Monitoring** | Token usage, context window meter, cost tracking, activity logs |
+| **Command palette** | Cmd+K to search, switch sessions, change models. Keyboard-first |
+| **Search** | Full-text search across all messages in the current session |
+| **14 themes** | Dark, light, and everything in between. Resizable panels, custom fonts |
+
+## Get Started
+
+### One command
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/daggerhashimoto/openclaw-nerve/master/install.sh | bash
+```
+
+The installer handles dependencies, cloning, building, and launching. It runs a setup wizard that auto-detects your gateway token and walks you through configuration.
+
+### Manual install
+
+```bash
+git clone https://github.com/daggerhashimoto/openclaw-nerve.git
+cd openclaw-nerve
+npm install
+npm run setup    # interactive wizard — configures .env
+npm run prod     # builds and starts the server
+```
+
+### Development
+
+```bash
+npm run dev            # frontend — Vite HMR on :3080
+npm run dev:server     # backend — watch mode on :3081
+```
+
+**Requires:** Node.js 22+ and an [OpenClaw](https://github.com/openclaw/openclaw) gateway.
+
+## How it works
+
+```
+Browser ─── Nerve (:3080) ─── OpenClaw Gateway (:18789)
+  │            │
+  ├─ WS ──────┤  proxied to gateway
+  ├─ SSE ─────┤  file watchers, real-time sync
+  └─ REST ────┘  files, memories, TTS, models
+```
+
+Nerve proxies WebSocket traffic to your gateway and adds its own REST layer for voice, memory, and monitoring.
+
+**Frontend:** React 19 · Tailwind CSS 4 · shadcn/ui · Vite 7
+**Backend:** Hono 4 on Node.js
+
+## Docs
+
+| | |
+|---|---|
+| **[Architecture](docs/ARCHITECTURE.md)** | How the codebase is organized |
+| **[Configuration](docs/CONFIGURATION.md)** | Every `.env` variable explained |
+| **[Agent Markers](docs/AGENT-MARKERS.md)** | TTS markers, inline charts, and how agents render rich UI |
+| **[Security](docs/SECURITY.md)** | What's locked down and how |
+| **[API](docs/API.md)** | REST and WebSocket endpoints |
+| **[Contributing](CONTRIBUTING.md)** | Dev setup, code style, PRs |
+| **[Troubleshooting](docs/TROUBLESHOOTING.md)** | Common issues and fixes |
+
+## License
+
+[MIT](LICENSE)

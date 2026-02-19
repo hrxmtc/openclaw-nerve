@@ -1,0 +1,52 @@
+node_modules/
+dist/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+*.swp
+*.swo
+*~
+.idea/
+.vscode/settings.json
+.vscode/launch.json
+
+# npm
+npm-debug.log*
+.npmrc
+
+# SSL certs
+certs/
+cert.pem
+key.pem
+
+# Logs
+server.log
+agent-log.json
+*.log
+
+# Environment
+.env
+.env.tmp
+.env.backup
+.env.backup.*
+tsconfig.server.tsbuildinfo
+server-dist/
+
+# Brand assets (local only)
+brand/
+docs/brand/
+
+# Internal docs (local only)
+docs/AUDIT.md
+docs/CODEBASE_ISSUES_VERIFIED.md
+docs/CODEBASE_REVIEW_AND_IDEAS.md
+docs/IMPROVEMENTS.md
+docs/OPENSOURCE_PLAN.md
+coverage/
+tts-config.json
+scripts-dist/
+.nerve/
+start.sh

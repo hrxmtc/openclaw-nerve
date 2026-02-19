@@ -1,0 +1,421 @@
+# Troubleshooting
+
+Common issues and solutions for Nerve.
+
+---
+
+## Build Errors
+
+### `tsc -b` fails with path alias errors
+
+**Symptom:** `Cannot find module '@/...'` during TypeScript compilation.
+
+**Cause:** The `@/` alias must be configured in both `tsconfig.json` (for editor) and the relevant project reference config.
+
+**Fix:** Ensure the root `tsconfig.json` has:
+```json
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": { "@/*": ["./src/*"] }
+  }
+}
+```
+
+### `npm run build:server` produces nothing
+
+**Symptom:** `server-dist/` is empty or `npm start` fails with "Cannot find module".
+
+**Cause:** Server TypeScript is compiled separately via `tsc -p config/tsconfig.server.json`.
+
+**Fix:**
+```bash
+npm run build:server   # Compiles server/ → server-dist/
+npm start              # Then runs node server-dist/index.js
+```
+
+### Chunk size warnings during `vite build`
+
+**Symptom:** Vite warns about chunks exceeding 500 kB.
+
+**Cause:** Heavy dependencies (highlight.js, react-markdown) are bundled.
+
+**Info:** This is expected. The build uses manual chunks to split: `react-vendor`, `markdown`, `ui-vendor`, `utils`. The warning limit is set to 600 kB in `vite.config.ts`. If a chunk exceeds this, check for accidental imports pulling in large libraries.
+
+### Port already in use
+
+**Symptom:** `Port 3080 is already in use. Is another instance running?`
+
+**Fix:**
+```bash
+# Find what's using the port
+lsof -i :3080
+# Kill it, or use a different port:
+PORT=3090 npm start
+```
+
+The server detects `EADDRINUSE` and exits with a clear error (see `server/index.ts`).
+
+---
+
+## Gateway Connection
+
+### "Auth failed" in ConnectDialog
+
+**Symptom:** Connection dialog shows "Auth failed: unknown" or similar.
+
+**Causes:**
+1. Wrong gateway token
+2. Gateway not running
+3. Token mismatch between Nerve server config and gateway
+
+**Fix:**
+- Verify the gateway is running: `openclaw gateway status`
+- Check token: the server reads `GATEWAY_TOKEN` or `OPENCLAW_GATEWAY_TOKEN` env var
+- For local access, `/api/connect-defaults` auto-provides the token (loopback only)
+- For remote access, the token is NOT auto-provided (security). Enter it manually in the connection dialog
+
+### Connection drops and "SIGNAL LOST" banner
+
+**Symptom:** Red reconnecting banner appears periodically.
+
+**Cause:** WebSocket connection to gateway dropped. Nerve auto-reconnects with exponential backoff (1s base, 30s max, up to 50 attempts).
+
+**Diagnosis:**
+```bash
+# Check gateway health
+curl http://127.0.0.1:18789/health
+
+# Check Nerve health (includes gateway probe)
+curl http://127.0.0.1:3080/health
+# Returns: { "status": "ok", "uptime": ..., "gateway": "ok"|"unreachable" }
+```
+
+**Fix:**
+- If gateway is unreachable, restart it: `openclaw gateway restart`
+- If persistent, check firewall rules or network configuration
+- The client stores credentials in `sessionStorage` (cleared on tab close) — if credentials are lost, reconnect manually
+
+### Auto-connect doesn't work
+
+**Symptom:** ConnectDialog appears even though the gateway is running.
+
+**Cause:** The frontend fetches `/api/connect-defaults` on mount. This endpoint only returns the token for loopback clients (127.0.0.1, ::1).
+
+**Fix:**
+- If accessing Nerve remotely (SSH tunnel, reverse proxy), you must enter the gateway URL and token manually
+- Alternatively, set the gateway URL in the connection dialog — the server's WebSocket proxy handles the actual connection
+
+---
+
+## WebSocket Proxy
+
+### WebSocket connects but no events arrive
+
+**Symptom:** UI shows "connected" but sessions/messages don't update.
+
+**Cause:** The WS proxy (`server/lib/ws-proxy.ts`) might not be injecting device identity correctly, so the gateway doesn't grant `operator.read`/`operator.write` scopes.
+
+**Diagnosis:**
+- Check server logs for `[ws-proxy] Injected device identity: ...`
+- If missing, the device identity file may be corrupted
+
+**Fix:**
+```bash
+# Remove and regenerate device identity
+rm ~/.nerve/device-identity.json
+# Restart Nerve — a new keypair will be generated
+```
+
+### "Target not allowed" WebSocket error
+
+**Symptom:** Browser console shows WebSocket close code 1008 with "Target not allowed".
+
+**Cause:** The gateway URL hostname is not in the `WS_ALLOWED_HOSTS` allowlist (configured in `server/lib/config.ts`).
+
+**Fix:** By default, only `127.0.0.1`, `localhost`, and `::1` are allowed. To add a custom host:
+```bash
+WS_ALLOWED_HOSTS=mygateway.local npm start
+```
+
+### Messages buffered indefinitely
+
+**Symptom:** Messages sent immediately after connecting are lost.
+
+**Info:** The proxy buffers up to 100 messages (1 MB) while the upstream gateway connection opens. If the buffer overflows, the client is disconnected with "Too many pending messages". This is a safety limit — reduce message burst rate.
+
+---
+
+## TTS Issues
+
+### No audio plays
+
+**Symptom:** TTS is enabled but no sound on responses.
+
+**Diagnosis tree:**
+1. **Sound enabled?** Check Settings → Audio → Sound toggle is on
+2. **TTS provider configured?** Check Settings → Audio → TTS Provider
+3. **API key present?**
+   - OpenAI: requires `OPENAI_API_KEY` env var
+   - Replicate: requires `REPLICATE_API_TOKEN` env var
+   - Edge: no key needed (free)
+4. **Server-side check:**
+   ```bash
+   curl -X POST http://127.0.0.1:3080/api/tts \
+     -H "Content-Type: application/json" \
+     -d '{"text": "hello", "provider": "edge"}'
+   ```
+   Should return audio/mpeg binary.
+
+**Provider auto-fallback:** If no explicit provider is selected, the server tries: OpenAI (if key) → Replicate (if key) → Edge (always available).
+
+### TTS plays old/wrong responses
+
+**Symptom:** Audio doesn't match the displayed message.
+
+**Cause:** TTS cache serving stale entries. The cache is an LRU with TTL expiry (configurable via `config.ttsCacheTtlMs`), 100 MB memory budget.
+
+**Fix:** Restart the Nerve server to clear the in-memory TTS cache.
+
+### Edge TTS fails silently
+
+**Symptom:** Edge TTS selected but no audio. No error in UI.
+
+**Cause:** Edge TTS uses Microsoft's speech service WebSocket. The Sec-MS-GEC token generation or the WebSocket connection may fail.
+
+**Diagnosis:** Check server logs for `[edge-tts]` errors.
+
+**Fix:** Edge TTS has no API key dependency, but requires outbound WebSocket access to `speech.platform.bing.com`. Ensure your network allows this.
+
+---
+
+## Voice Input / Wake Word
+
+### Microphone not working
+
+**Symptom:** Voice input button does nothing or permission denied.
+
+**Cause:** Microphone requires a **secure context** (HTTPS or localhost).
+
+**Fix:**
+- If accessing via `http://127.0.0.1:3080` — should work (localhost is secure)
+- If accessing remotely, use HTTPS:
+  ```bash
+  # Generate self-signed cert
+  mkdir -p certs
+  openssl req -x509 -newkey rsa:2048 -nodes \
+    -keyout certs/key.pem -out certs/cert.pem -days 365 \
+    -subj "/CN=localhost"
+  # Nerve auto-detects certs and starts HTTPS on port 3443
+  ```
+
+### Whisper transcription fails
+
+**Symptom:** Voice input records but transcription returns error.
+
+**Cause:** Transcription uses OpenAI Whisper API (requires `OPENAI_API_KEY`).
+
+**Fix:**
+- Ensure `OPENAI_API_KEY` is set in `.env` or environment
+- Check file size: max 12 MB (configurable in `config.limits.transcribe`)
+- Check MIME type: must be one of: `audio/webm`, `audio/mp3`, `audio/mpeg`, `audio/mp4`, `audio/m4a`, `audio/wav`, `audio/ogg`, `audio/flac`
+
+### Wake word doesn't trigger
+
+**Symptom:** Wake word toggle is on but voice detection never activates.
+
+**Cause:** Wake word state is managed collaboratively — the InputBar component reports wake word state to SettingsContext via `handleWakeWordState(enabled, toggleFn)`.
+
+**Fix:**
+- Ensure microphone permissions are granted
+- Try toggling wake word off and on via Settings or Cmd+K command palette
+- Check browser console for speech recognition errors
+
+---
+
+## Memory Editing
+
+### Memory changes don't appear
+
+**Symptom:** Added/deleted memories don't reflect in the UI.
+
+**Cause:** Memory operations go through the gateway tool invocation (`memory_store`/`memory_delete`), then the file watcher detects changes and broadcasts an SSE event.
+
+**Diagnosis:**
+1. Check POST/DELETE to `/api/memories` returns `{ ok: true }`
+2. Check server logs for `[file-watcher]` events
+3. Check SSE stream: `curl -N http://127.0.0.1:3080/api/events`
+
+**Fix:**
+- If the gateway tool call fails, check gateway connectivity
+- If file watcher isn't firing, the memory file path may be wrong — check `config.memoryPath`
+- Manual refresh: click the refresh button in the Memory tab, or use Cmd+K → "Refresh Memory"
+
+### Memory file path is wrong
+
+**Symptom:** Memories show as empty even though MEMORY.md exists.
+
+**Cause:** The server resolves memory path from config (`config.memoryPath`). The workspace path is the parent of the memory path.
+
+**Fix:** Check and set the correct path:
+```bash
+# In .env
+MEMORY_PATH=/path/to/.openclaw/workspace/MEMORY.md
+```
+
+---
+
+## Session Management
+
+### Sessions don't appear in sidebar
+
+**Symptom:** Session list is empty or shows only the main session.
+
+**Cause:** Sessions are fetched via gateway RPC `sessions.list` with `activeMinutes: 120` filter.
+
+**Fix:**
+- Sessions inactive for >2 hours won't appear — this is by design
+- Check gateway connectivity (sessions come from the gateway, not local state)
+- Force refresh: click refresh button or Cmd+K → "Refresh Sessions"
+
+### Sub-agent spawn times out
+
+**Symptom:** "Timed out waiting for subagent to spawn" error.
+
+**Cause:** Spawning uses a polling approach — sends a `[spawn-subagent]` chat message to the main session, then polls `sessions.list` every 2s for up to 30s waiting for a new subagent session to appear.
+
+**Fix:**
+- The main agent must be running and able to process the spawn request
+- Check that the main session isn't busy with another task
+- Check gateway logs for spawn errors
+
+### Session status stuck on "THINKING"
+
+**Symptom:** Session shows thinking/spinning indefinitely.
+
+**Cause:** The agent state machine transitions THINKING → STREAMING → DONE → IDLE. If a lifecycle event was missed, the status can get stuck.
+
+**Fix:**
+- Use the abort button (or Ctrl+C when generating) to reset the state
+- The DONE → IDLE auto-transition happens after 3 seconds (see `doneTimeoutsRef` in SessionContext)
+- Force refresh sessions to re-sync from gateway
+
+---
+
+## Model Switching
+
+### Model dropdown doesn't show available models
+
+**Symptom:** Model selector is empty or shows only the current model.
+
+**Cause:** Models are fetched via `GET /api/gateway/models`, which runs `openclaw models list --json`.
+
+**Fix:**
+- Ensure the `openclaw` binary is in PATH (the server searches multiple locations — see `lib/openclaw-bin.ts`)
+- Set `OPENCLAW_BIN` env var to the explicit path
+- Check server logs for model list errors
+- An allowlist can restrict visible models (configured server-side)
+
+### Model change doesn't take effect
+
+**Symptom:** Switched model in UI but responses still come from the old model.
+
+**Cause:** Model/thinking changes go through `POST /api/gateway/session-patch`, which invokes the gateway's session patch API.
+
+**Fix:**
+- The change applies per-session — switching sessions will show that session's model
+- Verify the patch succeeded: check for `{ ok: true }` response
+- Some models may not be available for the current session type
+
+---
+
+## Rate Limiting
+
+### "Too many requests" errors
+
+**Symptom:** API returns 429 status.
+
+**Cause:** Per-IP sliding window rate limiter. Different limits for:
+- General API endpoints
+- TTS synthesis (more restrictive)
+- Transcription (more restrictive)
+
+**Fix:**
+- Wait for the rate limit window to reset (check `X-RateLimit-Reset` header)
+- If behind a reverse proxy, ensure `X-Forwarded-For` is set correctly (the server only trusts forwarded headers from trusted proxy IPs)
+
+---
+
+## HTTPS / SSL
+
+### Certificate errors
+
+**Symptom:** Browser shows SSL warnings or refuses to connect on port 3443.
+
+**Fix:** For development, generate a self-signed cert:
+```bash
+mkdir -p certs
+openssl req -x509 -newkey rsa:2048 -nodes \
+  -keyout certs/key.pem -out certs/cert.pem -days 365 \
+  -subj "/CN=localhost"
+```
+
+The server auto-detects cert files at `certs/cert.pem` and `certs/key.pem`. No configuration needed — if the files exist, HTTPS starts on `config.sslPort` (default 3443).
+
+### SSE not working over HTTPS
+
+**Symptom:** Real-time updates (memory changes, token updates) don't arrive over HTTPS.
+
+**Cause:** The HTTPS server has special handling for SSE responses — it streams them instead of buffering (see `server/index.ts` SSE streaming fix).
+
+**Fix:** This should work automatically. If it doesn't, check that:
+- The response content-type includes `text/event-stream`
+- No intermediate reverse proxy is buffering the response
+- The compression middleware correctly skips `/api/events`
+
+---
+
+## Development
+
+### `npm run dev` — proxy errors
+
+**Symptom:** API requests fail with 502 during development.
+
+**Cause:** Vite proxies `/api` and `/ws` to the backend server. If the backend isn't running, all proxied requests fail.
+
+**Fix:** Run both servers:
+```bash
+# Terminal 1
+npm run dev:server   # Backend on port 3081
+
+# Terminal 2
+npm run dev          # Frontend on port 3080 (proxies to 3081)
+```
+
+### Tests fail with "Cannot find module"
+
+**Symptom:** Vitest can't resolve `@/` imports.
+
+**Fix:** The test config (`vitest.config.ts`) must have the same path alias:
+```ts
+resolve: {
+  alias: {
+    '@': path.resolve(__dirname, './src'),
+  },
+},
+```
+
+Also ensure `server-dist/` is excluded from test discovery (it contains compiled `.test.js` duplicates):
+```ts
+test: {
+  exclude: ['node_modules/**', 'server-dist/**'],
+}
+```
+
+---
+
+## Known Limitations
+
+### Desktop browsers only
+
+Nerve is designed for desktop browsers. There is no mobile-responsive layout yet. On phones and tablets the UI will be unusable or heavily clipped. This is a known gap, tracked in [#107](https://github.com/daggerhashimoto/openclaw-nerve/issues/107).
