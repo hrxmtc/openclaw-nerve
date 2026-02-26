@@ -11,7 +11,9 @@ import {
   CONTEXT_WARNING_THRESHOLD,
   CONTEXT_CRITICAL_THRESHOLD,
   buildWakePhrases,
+  buildPrimaryWakePhrase,
   buildStopPhrasesRegex,
+  WAKE_PREFIXES_BY_LANGUAGE,
 } from './constants';
 
 describe('Voice Control Phrases', () => {
@@ -63,6 +65,30 @@ describe('Voice Control Phrases', () => {
       const phrases = buildWakePhrases('   ');
       expect(phrases).toContain('hey agent');
     });
+
+    it('should generate wake phrases for every mapped language', () => {
+      Object.keys(WAKE_PREFIXES_BY_LANGUAGE).forEach((languageCode) => {
+        const phrases = buildWakePhrases('Kim', languageCode);
+        expect(phrases.length).toBeGreaterThan(0);
+        // English fallback should always exist for backwards compatibility
+        expect(phrases).toContain('hey kim');
+      });
+    });
+  });
+
+  describe('buildPrimaryWakePhrase', () => {
+    it('should use language-specific default phrase', () => {
+      expect(buildPrimaryWakePhrase('Kim', 'tr')).toBe('selam kim');
+      expect(buildPrimaryWakePhrase('Kim', 'en')).toBe('hey kim');
+    });
+
+    it('should prefer custom wake phrase when provided', () => {
+      expect(buildPrimaryWakePhrase('Kim', 'tr', ['merhaba kim'])).toBe('merhaba kim');
+    });
+
+    it('should ignore empty custom wake phrases', () => {
+      expect(buildPrimaryWakePhrase('Kim', 'tr', ['   '])).toBe('selam kim');
+    });
   });
 
   describe('DEFAULT_WAKE_PHRASES', () => {
@@ -99,6 +125,17 @@ describe('Voice Control Phrases', () => {
       expect(regex.test('this is a test')).toBe(false);
     });
 
+    it('should avoid Latin false positives inside larger words', () => {
+      const regex = buildStopPhrasesRegex('Kim', {
+        stopPhrases: ['done'],
+        cancelPhrases: [],
+        wakePhrases: [],
+      });
+
+      expect('undone'.replace(regex, '').trim()).toBe('undone');
+      expect('all done'.replace(regex, '').trim()).toBe('all');
+    });
+
     it('should handle empty agent name gracefully', () => {
       const regex = buildStopPhrasesRegex('');
       expect(regex.test('hey agent')).toBe(true);
@@ -112,6 +149,28 @@ describe('Voice Control Phrases', () => {
       // Dot should be literal, not wildcard
       expect(regex.test('hey agent.2')).toBe(true);
       expect(regex.test('hey agentX2')).toBe(false); // dot shouldn't match X
+    });
+
+    it('should strip non-Latin stop phrases at the end of text', () => {
+      const regex = buildStopPhrasesRegex('Kim', {
+        stopPhrases: ['отправь'],
+        cancelPhrases: [],
+        wakePhrases: [],
+      });
+
+      const cleaned = 'напомни мне завтра отправь'.replace(regex, '').trim();
+      expect(cleaned).toBe('напомни мне завтра');
+    });
+
+    it('should strip CJK stop phrases even without whitespace boundaries', () => {
+      const regex = buildStopPhrasesRegex('Kim', {
+        stopPhrases: ['发送'],
+        cancelPhrases: [],
+        wakePhrases: [],
+      });
+
+      const cleaned = '请帮我写邮件发送'.replace(regex, '').trim();
+      expect(cleaned).toBe('请帮我写邮件');
     });
   });
 

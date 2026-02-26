@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { buildWakePhrases, escapeRegex } from '@/lib/constants';
+import { buildPrimaryWakePhrase, buildStopPhrasesRegex } from '@/lib/constants';
 import { playWakePing, playSubmitPing, playCancelPing, ensureAudioContext } from './audio-feedback';
 
 // ─── Phrases from server config ──────────────────────────────────────────────
@@ -7,6 +7,7 @@ import { playWakePing, playSubmitPing, playCancelPing, ensureAudioContext } from
 interface VoicePhrases {
   stopPhrases: string[];
   cancelPhrases: string[];
+  wakePhrases?: string[];
 }
 
 const DEFAULT_PHRASES: VoicePhrases = {
@@ -14,31 +15,31 @@ const DEFAULT_PHRASES: VoicePhrases = {
   cancelPhrases: ['cancel', 'never mind', 'nevermind'],
 };
 
-let phrasesCache: VoicePhrases | null = null;
+let phrasesCache: { lang: string; phrases: VoicePhrases } | null = null;
 
-async function fetchVoicePhrases(): Promise<VoicePhrases> {
-  if (phrasesCache) return phrasesCache;
+/** Fetch voice phrases for the given language (merged with English fallback on server). */
+async function fetchVoicePhrases(lang?: string): Promise<VoicePhrases> {
+  const effectiveLang = lang || 'en';
+  if (phrasesCache && phrasesCache.lang === effectiveLang) return phrasesCache.phrases;
   try {
-    const resp = await fetch('/api/voice-phrases', { signal: AbortSignal.timeout(3000) });
+    const resp = await fetch(`/api/voice-phrases?lang=${effectiveLang}`, { signal: AbortSignal.timeout(3000) });
     if (!resp.ok) return DEFAULT_PHRASES;
     const data = await resp.json();
-    phrasesCache = {
+    const phrases: VoicePhrases = {
       stopPhrases: Array.isArray(data.stopPhrases) ? data.stopPhrases : DEFAULT_PHRASES.stopPhrases,
       cancelPhrases: Array.isArray(data.cancelPhrases) ? data.cancelPhrases : DEFAULT_PHRASES.cancelPhrases,
+      wakePhrases: Array.isArray(data.wakePhrases) ? data.wakePhrases : undefined,
     };
-    return phrasesCache;
+    phrasesCache = { lang: effectiveLang, phrases };
+    return phrases;
   } catch {
     return DEFAULT_PHRASES;
   }
 }
 
-/** Build stop phrase regex dynamically from phrase arrays + agent name. */
-function buildStopRegexFromPhrases(stopPhrases: string[], cancelPhrases: string[], agentName: string): RegExp {
-  const allPhrases = [...stopPhrases, ...cancelPhrases];
-  const escaped = allPhrases.map(p => escapeRegex(p));
-  const safeName = escapeRegex(agentName.trim().toLowerCase() || 'agent');
-  escaped.push(`hey ${safeName}`);
-  return new RegExp(`\\b(${escaped.join('|')})\\s*[.!?,]?\\s*$`, 'i');
+/** Invalidate the phrase cache (call when language changes). */
+export function invalidatePhrasesCache(): void {
+  phrasesCache = null;
 }
 
 const WAKE_WORD_KEY = 'nerve:wakeWordEnabled';
@@ -51,9 +52,36 @@ function getSpeechRecognition(): SpeechRecognitionConstructor | undefined {
 
 export type VoiceState = 'idle' | 'listening' | 'recording' | 'transcribing';
 
-function matchesPhrase(transcript: string, phrases: string[]): boolean {
-  const t = transcript.toLowerCase().trim();
-  return phrases.some(p => t.includes(p));
+function normalizeForMatch(text: string, language: string): string {
+  const normalized = (text || '')
+    .normalize('NFKC')
+    .replace(/[’`´]/g, "'")
+    .replace(/[.,!?،؟。！？؛…]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!normalized) return '';
+
+  const code = (language || '').trim();
+  if (code) {
+    try {
+      return normalized.toLocaleLowerCase(code);
+    } catch {
+      // Fall back to default lowercasing below.
+    }
+  }
+
+  return normalized.toLowerCase();
+}
+
+function matchesPhrase(transcript: string, phrases: string[], language: string): boolean {
+  const normalizedTranscript = normalizeForMatch(transcript, language);
+  if (!normalizedTranscript) return false;
+
+  return phrases.some((phrase) => {
+    const normalizedPhrase = normalizeForMatch(phrase, language);
+    return normalizedPhrase.length > 0 && normalizedTranscript.includes(normalizedPhrase);
+  });
 }
 
 /**
@@ -65,8 +93,51 @@ function matchesPhrase(transcript: string, phrases: string[]): boolean {
  *
  * @param onTranscription - Callback invoked with the cleaned transcription text.
  * @param agentName - Agent display name used to build dynamic wake phrases.
+ * @param language - Active language code used for recognition and phrase matching.
+ * @param phrasesVersion - Incrementing token to force phrase reloads after config edits.
  */
-export function useVoiceInput(onTranscription: (text: string) => void, agentName: string = 'Agent') {
+/** Map ISO 639-1 language code to BCP-47 locale for Web Speech API. */
+export const LANG_TO_BCP47: Record<string, string> = {
+  en: 'en-US',
+  zh: 'zh-CN',
+  hi: 'hi-IN',
+  es: 'es-ES',
+  fr: 'fr-FR',
+  ar: 'ar-SA',
+  bn: 'bn-IN',
+  pt: 'pt-BR',
+  ru: 'ru-RU',
+  ja: 'ja-JP',
+  de: 'de-DE',
+  tr: 'tr-TR',
+};
+
+/** Resolve UI language setting to a valid recognition locale. */
+export function resolveRecognitionLang(language: string): string {
+  const normalized = (language || '').trim().toLowerCase();
+
+  if (!normalized || normalized === 'auto') {
+    return LANG_TO_BCP47.en;
+  }
+
+  if (LANG_TO_BCP47[normalized]) {
+    return LANG_TO_BCP47[normalized];
+  }
+
+  // Already a locale-like value (e.g. en-GB)
+  if (language.includes('-')) {
+    return language;
+  }
+
+  return LANG_TO_BCP47.en;
+}
+
+export function useVoiceInput(
+  onTranscription: (text: string) => void,
+  agentName: string = 'Agent',
+  language: string = 'en',
+  phrasesVersion: number = 0,
+) {
   const [state, setState] = useState<VoiceState>('idle');
   const stateRef = useRef<VoiceState>('idle');
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -88,15 +159,30 @@ export function useVoiceInput(onTranscription: (text: string) => void, agentName
     try { localStorage.setItem(WAKE_WORD_KEY, String(wakeWordEnabled)); } catch { /* noop */ }
   }, [wakeWordEnabled]);
 
-  // Dynamic wake phrases based on agent name
-  const wakePhrases = useMemo(() => buildWakePhrases(agentName), [agentName]);
+  // Single primary wake phrase based on agent name + selected language.
+  const defaultWakePhrase = useMemo(() => buildPrimaryWakePhrase(agentName, language), [agentName, language]);
 
-  // Phrases loaded from server config
-  const [phrases, setPhrases] = useState<VoicePhrases>(phrasesCache || DEFAULT_PHRASES);
-  useEffect(() => { fetchVoicePhrases().then(setPhrases); }, []);
+  // Phrases loaded from server config — refetch when language or phrase config changes
+  const [phrases, setPhrases] = useState<VoicePhrases>(phrasesCache?.phrases || DEFAULT_PHRASES);
+  useEffect(() => {
+    invalidatePhrasesCache();
+    fetchVoicePhrases(language).then(setPhrases);
+  }, [language, phrasesVersion]);
+
+  // Use a single wake phrase per language (custom phrase wins over generated default).
+  const wakePhrases = useMemo(() => {
+    const primaryWake = buildPrimaryWakePhrase(agentName, language, phrases.wakePhrases);
+    return primaryWake ? [primaryWake] : [defaultWakePhrase];
+  }, [agentName, language, phrases.wakePhrases, defaultWakePhrase]);
+
   const stopPhrasesRegex = useMemo(
-    () => buildStopRegexFromPhrases(phrases.stopPhrases, phrases.cancelPhrases, agentName),
-    [phrases, agentName],
+    () => buildStopPhrasesRegex(agentName, {
+      language,
+      stopPhrases: phrases.stopPhrases,
+      cancelPhrases: phrases.cancelPhrases,
+      wakePhrases,
+    }),
+    [agentName, language, phrases.cancelPhrases, phrases.stopPhrases, wakePhrases],
   );
   // Refs to access current values in callbacks without stale closures
   // (event handlers are set up once but need fresh phrase values)
@@ -106,6 +192,8 @@ export function useVoiceInput(onTranscription: (text: string) => void, agentName
   stopPhrasesRegexRef.current = stopPhrasesRegex;
   const phrasesRef = useRef(phrases);
   phrasesRef.current = phrases;
+  const languageRef = useRef(language);
+  languageRef.current = language;
   const wakeTriggeredRef = useRef(false);
   // Track intentional stops to avoid restart loops
   const intentionalStopRef = useRef(false);
@@ -168,7 +256,7 @@ export function useVoiceInput(onTranscription: (text: string) => void, agentName
       const recognition = new SpeechRecognition();
       recognition.continuous = true;
       recognition.interimResults = true;
-      recognition.lang = 'en-US';
+      recognition.lang = resolveRecognitionLang(languageRef.current);
       recognitionRef.current = recognition;
       intentionalStopRef.current = false;
 
@@ -176,20 +264,19 @@ export function useVoiceInput(onTranscription: (text: string) => void, agentName
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const transcript = event.results[i][0].transcript;
           const currentMode = modeRef.current;
-
           if (currentMode === 'stop') {
-            if (matchesPhrase(transcript, phrasesRef.current.cancelPhrases)) {
+            if (matchesPhrase(transcript, phrasesRef.current.cancelPhrases, languageRef.current)) {
               playCancelPing();
               doDiscard();
               return;
             }
-            if (matchesPhrase(transcript, phrasesRef.current.stopPhrases)) {
+            if (matchesPhrase(transcript, phrasesRef.current.stopPhrases, languageRef.current)) {
               playSubmitPing();
               doStopAndTranscribe();
               return;
             }
           } else if (currentMode === 'wake') {
-            if (matchesPhrase(transcript, wakePhrasesRef.current)) {
+            if (matchesPhrase(transcript, wakePhrasesRef.current, languageRef.current)) {
               wakeTriggeredRef.current = true;
               playWakePing();
               doStartRecording();
@@ -364,6 +451,13 @@ export function useVoiceInput(onTranscription: (text: string) => void, agentName
     if (wakeWordEnabledRef.current) stopWakeWordListener();
     else startWakeWordListener();
   }, [startWakeWordListener, stopWakeWordListener]);
+
+  // Restart recognition when language changes (so Web Speech API uses new locale)
+  useEffect(() => {
+    if (wakeWordEnabledRef.current && stateRef.current === 'listening') {
+      ensureRecognitionRef.current('wake');
+    }
+  }, [language]);
 
   // Auto-start wake word listener if persisted as enabled (only if mic already granted)
   const startWakeWordRef = useRef(startWakeWordListener);

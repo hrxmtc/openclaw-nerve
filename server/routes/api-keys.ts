@@ -7,43 +7,11 @@
  */
 
 import { Hono } from 'hono';
-import fs from 'node:fs';
-import path from 'node:path';
 import { config } from '../lib/config.js';
+import { writeEnvKey } from '../lib/env-file.js';
 import { rateLimitGeneral } from '../middleware/rate-limit.js';
 
 const app = new Hono();
-
-/** Path to the .env file in the project root. */
-const ENV_PATH = path.resolve(process.cwd(), '.env');
-
-/** Write key=value pairs back to .env, preserving comments and order. */
-function writeEnvKey(key: string, value: string): void {
-  let lines: string[] = [];
-  try {
-    lines = fs.readFileSync(ENV_PATH, 'utf8').split('\n');
-  } catch { /* file doesn't exist yet */ }
-
-  let found = false;
-  const updated = lines.map((line) => {
-    const trimmed = line.trim();
-    if (trimmed.startsWith('#') || !trimmed) return line;
-    const eqIdx = trimmed.indexOf('=');
-    if (eqIdx < 0) return line;
-    const lineKey = trimmed.slice(0, eqIdx).trim();
-    if (lineKey === key) {
-      found = true;
-      return `${key}=${value}`;
-    }
-    return line;
-  });
-
-  if (!found) {
-    updated.push(`${key}=${value}`);
-  }
-
-  fs.writeFileSync(ENV_PATH, updated.join('\n'));
-}
 
 /** GET /api/keys — which API keys are configured */
 app.get('/api/keys', rateLimitGeneral, (c) => {
@@ -61,7 +29,7 @@ app.put('/api/keys', rateLimitGeneral, async (c) => {
 
     if (body.openaiKey !== undefined) {
       const val = body.openaiKey.trim();
-      writeEnvKey('OPENAI_API_KEY', val);
+      await writeEnvKey('OPENAI_API_KEY', val);
       // Update runtime config (cast away readonly for hot-reload)
       (config as Record<string, unknown>).openaiApiKey = val;
       results.push(val ? 'OPENAI_API_KEY saved' : 'OPENAI_API_KEY cleared');
@@ -69,7 +37,7 @@ app.put('/api/keys', rateLimitGeneral, async (c) => {
 
     if (body.replicateToken !== undefined) {
       const val = body.replicateToken.trim();
-      writeEnvKey('REPLICATE_API_TOKEN', val);
+      await writeEnvKey('REPLICATE_API_TOKEN', val);
       (config as Record<string, unknown>).replicateApiToken = val;
       results.push(val ? 'REPLICATE_API_TOKEN saved' : 'REPLICATE_API_TOKEN cleared');
     }

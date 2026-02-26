@@ -13,7 +13,7 @@
  */
 
 import { config } from '../lib/config.js';
-import { getTTSConfig } from '../lib/tts-config.js';
+import { getTTSConfig, resolveQwen3Language } from '../lib/tts-config.js';
 import { REPLICATE_QWEN_TTS_URL } from '../lib/constants.js';
 
 export interface ReplicateTTSResult {
@@ -41,9 +41,14 @@ interface ReplicateModelDef {
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function buildQwenInput(text: string, voice?: string): Record<string, string> {
   const qwen = getTTSConfig().qwen;
+  // Use language-aware resolution: config language → qwen3 mapping → fallback to English
+  const resolved = resolveQwen3Language();
+  if (resolved.warning) {
+    console.warn(`[tts:replicate] ${resolved.warning}`);
+  }
   const input: Record<string, string> = {
     text,
-    language: qwen.language,
+    language: resolved.voice, // resolved.voice is the Qwen3 language string (e.g. 'German', 'English')
     mode: qwen.mode,
   };
 

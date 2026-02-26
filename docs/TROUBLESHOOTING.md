@@ -316,7 +316,7 @@ After approval, reconnect from the browser (refresh the page or click reconnect)
 **Fix (local STT):**
 - Models auto-download on first use. Check server logs for download progress or errors
 - Ensure `ffmpeg` is installed (the installer handles this): `ffmpeg -version`
-- Check model file exists: `ls ~/.nerve/models/ggml-tiny.en.bin`
+- Check model file exists: `ls ~/.nerve/models/ggml-tiny.bin`
 
 **Fix (OpenAI STT):**
 - Set `STT_PROVIDER=openai` and `OPENAI_API_KEY` in `.env`
@@ -324,6 +324,35 @@ After approval, reconnect from the browser (refresh the page or click reconnect)
 **Both providers:**
 - Max file size: 12 MB
 - Accepted formats: `audio/webm`, `audio/mp3`, `audio/mpeg`, `audio/mp4`, `audio/m4a`, `audio/wav`, `audio/ogg`, `audio/flac`
+
+### Non-English transcription is inaccurate
+
+**Symptom:** STT works, but non-English speech is mis-transcribed or stop/cancel commands are unreliable.
+
+**Causes:**
+- Language is set incorrectly
+- Local model is `tiny` (fast, but less accurate for conversational non-English)
+- English-only model (`*.en`) selected for non-English speech
+
+**Fix:**
+1. Set language explicitly in **Settings → Audio → Language** (no auto-detect mode)
+2. For local STT, switch model from `tiny` to `base`
+3. Ensure `WHISPER_MODEL` is multilingual (`tiny`, `base`, `small`) for non-English usage
+4. Persist language in `.env` as `NERVE_LANGUAGE=<code>` (legacy `LANGUAGE` is still read, but deprecated)
+
+### Voice phrase changes don't persist
+
+**Symptom:** Custom stop/cancel/wake phrases disappear after refresh or restart.
+
+**Cause:** Phrase overrides are stored on disk at `~/.nerve/voice-phrases.json` (or `NERVE_VOICE_PHRASES_PATH` if set). Write failures usually come from path/permission issues.
+
+**Fix:**
+- Verify file location and permissions:
+  ```bash
+  ls -l ~/.nerve/voice-phrases.json
+  ```
+- If using a custom path, ensure `NERVE_VOICE_PHRASES_PATH` points to a writable location
+- Re-save phrases via Settings and watch server logs for `/api/voice-phrases` errors
 
 ### Wake word doesn't trigger
 

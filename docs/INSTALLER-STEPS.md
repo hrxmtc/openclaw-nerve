@@ -145,6 +145,7 @@ The script runs these checks in order:
 - Ensures `~/.nerve/models/ggml-tiny.en.bin` exists.
 - If missing, downloads ~75MB from Hugging Face.
 - If download fails, continues with warning (voice input can still use OpenAI API).
+- Note: this is bootstrap-only for fast first run. Runtime default STT model is `tiny` (multilingual) unless user overrides `WHISPER_MODEL`.
 
 ### 3.6 `ffmpeg` check/install
 - If `ffmpeg` missing:

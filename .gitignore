@@ -36,3 +36,4 @@ tsconfig.server.tsbuildinfo
 server-dist/
 .nerve/
 tts-config.json
+voice-phrases.json

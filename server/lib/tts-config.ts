@@ -11,6 +11,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { config } from './config.js';
+import { getEdgeTtsVoice, getQwen3Language, getFallbackInfo } from './language.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
@@ -127,4 +129,72 @@ function deepMerge(target: any, source: any): any {
     }
   }
   return result;
+}
+
+// ─── Language-aware TTS voice resolution ─────────────────────────────────────
+
+export interface ResolvedTTSVoice {
+  voice: string;
+  language: string;
+  fallback: boolean;
+  warning?: string;
+}
+
+/**
+ * Resolve the effective Edge TTS voice considering language preference.
+ *
+ * Priority chain:
+ *   1. Per-voice override in tts-config.json (power users) — if it differs from the English default
+ *   2. Language-derived voice (from language registry + gender preference)
+ *   3. DEFAULT_VOICE fallback
+ */
+export function resolveEdgeTTSVoice(): ResolvedTTSVoice {
+  const cfg = getTTSConfig();
+  const lang = config.language;
+  const gender = config.edgeVoiceGender;
+
+  // If user explicitly overrode the voice to something non-default, respect it
+  const userVoice = cfg.edge.voice;
+  const defaultEnVoice = DEFAULTS.edge.voice; // 'en-US-AriaNeural'
+  const isUserOverride = userVoice && userVoice !== defaultEnVoice;
+
+  if (isUserOverride) {
+    return { voice: userVoice, language: lang, fallback: false };
+  }
+
+  // Use language-derived voice
+  const voice = getEdgeTtsVoice(lang, gender);
+  return { voice, language: lang, fallback: false };
+}
+
+/**
+ * Resolve the effective Qwen3 TTS language, falling back to English if unsupported.
+ */
+export function resolveQwen3Language(): ResolvedTTSVoice {
+  const lang = config.language;
+  const qwen3Lang = getQwen3Language(lang);
+
+  if (qwen3Lang) {
+    return { voice: qwen3Lang, language: lang, fallback: false };
+  }
+
+  const info = getFallbackInfo('replicate', lang);
+  return {
+    voice: 'English',
+    language: 'en',
+    fallback: true,
+    warning: info.warning,
+  };
+}
+
+/**
+ * Get provider-specific language support info for the current language setting.
+ */
+export function getProviderLanguageSupport(): Record<string, { supported: boolean; warning?: string }> {
+  const lang = config.language;
+  return {
+    edge: getFallbackInfo('edge', lang),
+    replicate: getFallbackInfo('replicate', lang),
+    openai: getFallbackInfo('openai', lang),
+  };
 }

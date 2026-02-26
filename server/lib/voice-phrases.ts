@@ -1,46 +1,195 @@
 /**
- * Voice phrase configuration — reads from voice-phrases.json.
- * Stop, cancel, and wake phrases live here instead of hardcoded in constants.
+ * Voice phrase configuration — per-language stop/cancel/wake phrases.
  *
- * Config file: <PROJECT_ROOT>/voice-phrases.json
+ * Primary runtime config file: ~/.nerve/voice-phrases.json
+ * Legacy fallback (read-only): <PROJECT_ROOT>/voice-phrases.json
+ *
+ * Format (v2 — per-language):
+ * {
+ *   "en": { "stopPhrases": [...], "cancelPhrases": [...] },
+ *   "fr": { "stopPhrases": [...], "cancelPhrases": [...] }
+ * }
+ *
+ * Legacy flat format (v1):
+ * { "stopPhrases": [...], "cancelPhrases": [...] }
+ *   → interpreted as the "en" entry.
  */
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DEFAULT_VOICE_PHRASES, type LanguageVoicePhrases } from './constants.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
-const CONFIG_PATH = path.join(PROJECT_ROOT, 'voice-phrases.json');
+const LEGACY_CONFIG_PATH = path.join(PROJECT_ROOT, 'voice-phrases.json');
+const CONFIG_PATH = process.env.NERVE_VOICE_PHRASES_PATH || path.join(process.env.HOME || os.homedir(), '.nerve', 'voice-phrases.json');
 
-export interface VoicePhrases {
-  stopPhrases: string[];
-  cancelPhrases: string[];
+type PhrasesStore = Record<string, LanguageVoicePhrases>;
+
+let cached: PhrasesStore | null = null;
+let cachedMtime = 0;
+let cachedPath = '';
+
+/** Check if object is legacy v1 flat format (has stopPhrases at top level). */
+function isLegacyFormat(raw: unknown): raw is LanguageVoicePhrases {
+  return (
+    typeof raw === 'object' &&
+    raw !== null &&
+    'stopPhrases' in raw &&
+    Array.isArray((raw as Record<string, unknown>).stopPhrases)
+  );
 }
 
-const DEFAULTS: VoicePhrases = {
-  stopPhrases: ["boom", "i'm done", "im done", "all right i'm done", "alright i'm done", "that's it", "thats it", "send it", "done"],
-  cancelPhrases: ['cancel', 'never mind', 'nevermind'],
-};
+function resolveReadPath(): string | null {
+  if (fs.existsSync(CONFIG_PATH)) return CONFIG_PATH;
+  if (fs.existsSync(LEGACY_CONFIG_PATH)) return LEGACY_CONFIG_PATH;
+  return null;
+}
 
-let cached: VoicePhrases | null = null;
-let cachedMtime = 0;
-
-/** Read voice phrases, with file-change detection. */
-export function getVoicePhrases(): VoicePhrases {
-  try {
-    const stat = fs.statSync(CONFIG_PATH);
-    if (cached && stat.mtimeMs === cachedMtime) return cached;
-
-    const raw = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
-    cached = {
-      stopPhrases: Array.isArray(raw.stopPhrases) ? raw.stopPhrases : DEFAULTS.stopPhrases,
-      cancelPhrases: Array.isArray(raw.cancelPhrases) ? raw.cancelPhrases : DEFAULTS.cancelPhrases,
+function parseStore(raw: unknown): PhrasesStore {
+  // Legacy flat format (v1) — interpret as English-only.
+  if (isLegacyFormat(raw)) {
+    return {
+      en: {
+        stopPhrases: raw.stopPhrases,
+        cancelPhrases: Array.isArray(raw.cancelPhrases) ? raw.cancelPhrases : DEFAULT_VOICE_PHRASES.en.cancelPhrases,
+      },
     };
-    cachedMtime = stat.mtimeMs;
-    return cached;
-  } catch {
-    // File missing or invalid — use defaults
-    return DEFAULTS;
   }
+
+  // v2 format — validate entries
+  if (!raw || typeof raw !== 'object') return {};
+
+  const store: PhrasesStore = {};
+  for (const [lang, val] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof val !== 'object' || val === null) continue;
+
+    const v = val as Record<string, unknown>;
+    const entry: LanguageVoicePhrases = {
+      stopPhrases: Array.isArray(v.stopPhrases) ? v.stopPhrases as string[] : [],
+      cancelPhrases: Array.isArray(v.cancelPhrases) ? v.cancelPhrases as string[] : [],
+    };
+
+    if (Array.isArray(v.wakePhrases) && v.wakePhrases.length > 0) {
+      const primaryWake = (v.wakePhrases as string[])
+        .map((phrase) => phrase.trim())
+        .find((phrase) => phrase.length > 0);
+      if (primaryWake) {
+        entry.wakePhrases = [primaryWake];
+      }
+    }
+
+    store[lang] = entry;
+  }
+
+  return store;
+}
+
+/** Read the full per-language phrases store. */
+function readStore(): PhrasesStore {
+  try {
+    const readPath = resolveReadPath();
+    if (!readPath) return {};
+
+    const stat = fs.statSync(readPath);
+    if (cached && readPath === cachedPath && stat.mtimeMs === cachedMtime) return cached;
+
+    const raw = JSON.parse(fs.readFileSync(readPath, 'utf-8'));
+    const store = parseStore(raw);
+
+    cached = store;
+    cachedPath = readPath;
+    cachedMtime = stat.mtimeMs;
+    return store;
+  } catch {
+    // File missing or invalid — return empty (defaults come from constants)
+    return {};
+  }
+}
+
+/** Write the full store to disk and refresh cache. */
+function writeStore(store: PhrasesStore): void {
+  fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
+  fs.writeFileSync(CONFIG_PATH, `${JSON.stringify(store, null, 2)}\n`, 'utf-8');
+  cached = store;
+  cachedPath = CONFIG_PATH;
+  cachedMtime = fs.statSync(CONFIG_PATH).mtimeMs;
+}
+
+/**
+ * Get voice phrases for a specific language.
+ * Returns the user's custom phrases merged with English as fallback.
+ * The matching logic should check both the language-specific set AND English.
+ */
+export function getVoicePhrases(lang?: string): LanguageVoicePhrases {
+  const store = readStore();
+  const effectiveLang = lang || 'en';
+
+  // Get language-specific phrases (custom > defaults)
+  const langPhrases = store[effectiveLang] || DEFAULT_VOICE_PHRASES[effectiveLang];
+  const enPhrases = store['en'] || DEFAULT_VOICE_PHRASES.en;
+
+  if (!langPhrases || effectiveLang === 'en') {
+    return enPhrases;
+  }
+
+  // Merge: language-specific + English fallback (deduplicated)
+  const merged: LanguageVoicePhrases = {
+    stopPhrases: [...new Set([...langPhrases.stopPhrases, ...enPhrases.stopPhrases])],
+    cancelPhrases: [...new Set([...langPhrases.cancelPhrases, ...enPhrases.cancelPhrases])],
+  };
+
+  // Wake phrases: language-specific only (no English merge — these replace, not augment)
+  if (langPhrases.wakePhrases?.length) {
+    merged.wakePhrases = langPhrases.wakePhrases;
+  }
+
+  return merged;
+}
+
+/**
+ * Get phrases for a specific language only (no English merge).
+ * Used by the settings UI to show what's configured per-language.
+ */
+export function getLanguagePhrases(lang: string): LanguageVoicePhrases | null {
+  const store = readStore();
+  return store[lang] || null;
+}
+
+/**
+ * Check if custom phrases have been configured for a language.
+ */
+export function hasCustomPhrases(lang: string): boolean {
+  const store = readStore();
+  return lang in store;
+}
+
+/**
+ * Save custom phrases for a specific language.
+ */
+export function setLanguagePhrases(lang: string, phrases: LanguageVoicePhrases): void {
+  const store = readStore();
+  const entry: LanguageVoicePhrases = {
+    stopPhrases: phrases.stopPhrases.filter(p => p.trim().length > 0),
+    cancelPhrases: phrases.cancelPhrases.filter(p => p.trim().length > 0),
+  };
+  if (phrases.wakePhrases?.length) {
+    const primaryWake = phrases.wakePhrases
+      .map((phrase) => phrase.trim())
+      .find((phrase) => phrase.length > 0);
+    if (primaryWake) {
+      entry.wakePhrases = [primaryWake];
+    }
+  }
+  store[lang] = entry;
+  writeStore(store);
+}
+
+/**
+ * Get the full store (for admin/debug).
+ */
+export function getAllPhrases(): PhrasesStore {
+  return readStore();
 }

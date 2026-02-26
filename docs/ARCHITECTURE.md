@@ -324,6 +324,12 @@ Applied in order in `app.ts`:
 | `/api/tts` | `routes/tts.ts` | POST | Text-to-speech with provider auto-selection (OpenAI → Replicate → Edge). LRU cache with TTL |
 | `/api/tts/config` | `routes/tts.ts` | GET, PUT | TTS voice configuration per provider (read / partial update) |
 | `/api/transcribe` | `routes/transcribe.ts` | POST | Audio transcription via OpenAI Whisper or local whisper.cpp (`STT_PROVIDER`). Multipart file upload, MIME validation |
+| `/api/transcribe/config` | `routes/transcribe.ts` | GET, PUT | STT runtime config (provider/model/language), model readiness/download status, hot-reload updates |
+| `/api/language` | `routes/transcribe.ts` | GET, PUT | Language preference + Edge voice gender management (`NERVE_LANGUAGE`, `EDGE_VOICE_GENDER`) |
+| `/api/language/support` | `routes/transcribe.ts` | GET | Full provider × language compatibility matrix + current local model multilingual state |
+| `/api/voice-phrases` | `routes/voice-phrases.ts` | GET | Merged recognition phrase set (selected language + English fallback) |
+| `/api/voice-phrases/status` | `routes/voice-phrases.ts` | GET | Per-language custom phrase configuration status |
+| `/api/voice-phrases/:lang` | `routes/voice-phrases.ts` | GET, PUT | Read/save language-specific stop/cancel/wake phrase overrides |
 | `/api/agentlog` | `routes/agent-log.ts` | GET, POST | Agent activity log persistence. Zod-validated entries. Mutex-protected file I/O |
 | `/api/tokens` | `routes/tokens.ts` | GET | Token usage statistics — scans session transcripts, persists high water mark |
 | `/api/memories` | `routes/memories.ts` | GET, POST, DELETE | Memory management — reads MEMORY.md + daily files, stores/deletes via gateway tool invocation |
@@ -360,6 +366,9 @@ Applied in order in `app.ts`:
 | `lib/file-utils.ts` | File browser utilities — path validation, directory exclusions, binary file detection |
 | `lib/files.ts` | Async file helpers (`readJSON`, `writeJSON`, `readText`) |
 | `lib/mutex.ts` | Async mutex for serializing file read-modify-write. Includes keyed mutex variant |
+| `lib/env-file.ts` | Mutex-protected `.env` key upserts for hot-reload settings writes (`writeEnvKey`) |
+| `lib/language.ts` | Language/provider compatibility helpers (`isLanguageSupported`, fallback metadata) |
+| `lib/voice-phrases.ts` | Runtime per-language phrase storage/merge (custom overrides + English fallback) |
 | `lib/cached-fetch.ts` | Generic TTL cache with in-flight request deduplication |
 | `lib/usage-tracker.ts` | Persistent token usage high water mark tracking |
 | `lib/tts-config.ts` | TTS voice configuration file management |

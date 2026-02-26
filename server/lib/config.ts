@@ -13,12 +13,34 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_GATEWAY_URL, DEFAULT_PORT, DEFAULT_SSL_PORT, DEFAULT_HOST, WHISPER_MODEL_FILES } from './constants.js';
+import {
+  DEFAULT_GATEWAY_URL,
+  DEFAULT_PORT,
+  DEFAULT_SSL_PORT,
+  DEFAULT_HOST,
+  WHISPER_MODEL_FILES,
+  WHISPER_DEFAULT_MODEL,
+  DEFAULT_LANGUAGE,
+  SUPPORTED_LANGUAGES,
+} from './constants.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 
 const HOME = process.env.HOME || os.homedir();
+const SUPPORTED_LANGUAGE_CODES = new Set(SUPPORTED_LANGUAGES.map((l) => l.code));
+
+const LANGUAGE_ENV_VALUE = process.env.NERVE_LANGUAGE ?? process.env.LANGUAGE;
+
+function normalizeLanguagePreference(language: string | undefined): string {
+  const normalized = (language || DEFAULT_LANGUAGE).trim().toLowerCase();
+  if (!normalized || normalized === 'auto') return DEFAULT_LANGUAGE;
+
+  const code = normalized.split('-')[0] || DEFAULT_LANGUAGE;
+  if (!SUPPORTED_LANGUAGE_CODES.has(code)) return DEFAULT_LANGUAGE;
+
+  return code;
+}
 
 export const config = {
   port: Number(process.env.PORT || DEFAULT_PORT),
@@ -32,8 +54,16 @@ export const config = {
 
   // Speech-to-text
   sttProvider: (process.env.STT_PROVIDER || 'local') as 'local' | 'openai',
-  whisperModel: process.env.WHISPER_MODEL || 'tiny.en',
+  whisperModel: process.env.WHISPER_MODEL || WHISPER_DEFAULT_MODEL,
   whisperModelDir: process.env.WHISPER_MODEL_DIR || path.join(HOME, '.nerve', 'models'),
+
+  // Language preference (ISO 639-1). Invalid/auto values are normalized to English.
+  // Primary env key: NERVE_LANGUAGE. Legacy LANGUAGE is still accepted as fallback.
+  language: normalizeLanguagePreference(LANGUAGE_ENV_VALUE),
+  edgeVoiceGender:
+    process.env.EDGE_VOICE_GENDER === 'male' || process.env.EDGE_VOICE_GENDER === 'female'
+      ? process.env.EDGE_VOICE_GENDER
+      : 'female',
 
   // Gateway connection
   gatewayUrl: process.env.GATEWAY_URL || DEFAULT_GATEWAY_URL,
@@ -166,6 +196,9 @@ export function validateConfig(): void {
   }
   if (!config.replicateApiToken) {
     console.warn('[config] ⚠ REPLICATE_API_TOKEN not set — Qwen TTS unavailable');
+  }
+  if (!process.env.NERVE_LANGUAGE && process.env.LANGUAGE) {
+    console.warn('[config] ⚠ LANGUAGE is deprecated — use NERVE_LANGUAGE instead');
   }
   if (config.host === '0.0.0.0' && config.auth) {
     // Only warn about network binding when auth IS enabled (the loud warning above covers the no-auth case)

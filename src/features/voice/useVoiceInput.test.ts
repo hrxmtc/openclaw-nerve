@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi, Mock } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useVoiceInput } from './useVoiceInput';
+import { LANG_TO_BCP47, resolveRecognitionLang, useVoiceInput } from './useVoiceInput';
 import * as audioFeedback from './audio-feedback';
 import { buildWakePhrases, buildStopPhrasesRegex } from '@/lib/constants';
 
@@ -220,6 +220,46 @@ describe('useVoiceInput', () => {
       });
 
       expect(result.current.voiceState).toBe('listening');
+    });
+  });
+
+  describe('Language Locale Mapping', () => {
+    it('should map every supported language code to a recognition locale', () => {
+      Object.values(LANG_TO_BCP47).forEach((locale) => {
+        expect(typeof locale).toBe('string');
+        expect(locale.length).toBeGreaterThan(0);
+        expect(locale.includes('-')).toBe(true);
+      });
+    });
+
+    it('should resolve all mapped language codes to their BCP-47 locales', () => {
+      Object.entries(LANG_TO_BCP47).forEach(([code, locale]) => {
+        expect(resolveRecognitionLang(code)).toBe(locale);
+      });
+    });
+
+    it('should default to English locale when language is unset or auto', () => {
+      expect(resolveRecognitionLang('')).toBe('en-US');
+      expect(resolveRecognitionLang('auto')).toBe('en-US');
+    });
+
+    it('should set SpeechRecognition.lang for each mapped language', async () => {
+      const onTranscription = vi.fn();
+
+      for (const [lang, locale] of Object.entries(LANG_TO_BCP47)) {
+        const { result, unmount } = renderHook(() => useVoiceInput(onTranscription, 'Kim', lang));
+
+        act(() => {
+          result.current.startWakeWordListener();
+        });
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(300);
+        });
+
+        expect(mockRecognition?.lang).toBe(locale);
+        unmount();
+      }
     });
   });
 

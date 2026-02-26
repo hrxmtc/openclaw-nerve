@@ -139,16 +139,24 @@ TTS provider fallback chain (when no explicit provider is requested):
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `STT_PROVIDER` | `local` | STT provider: `local` (whisper.cpp, no API key needed) or `openai` (requires `OPENAI_API_KEY`) |
-| `WHISPER_MODEL` | `tiny.en` | Local whisper model: `tiny.en` (75 MB), `base.en` (142 MB), or `small.en` (466 MB) |
+| `WHISPER_MODEL` | `tiny` | Local whisper model: `tiny` (75 MB), `base` (142 MB), or `small` (466 MB) — multilingual variants. English-only variants (`tiny.en`, `base.en`, `small.en`) are also available. |
 | `WHISPER_MODEL_DIR` | `~/.nerve/models/` | Directory for downloaded whisper model files |
+| `NERVE_LANGUAGE` | `en` | Preferred voice language (ISO 639-1). Legacy `LANGUAGE` is still accepted but deprecated |
 
 ```env
 # Use local speech-to-text (no API key needed)
 STT_PROVIDER=local
-WHISPER_MODEL=tiny.en
+WHISPER_MODEL=tiny
+NERVE_LANGUAGE=en
 ```
 
+Nerve uses explicit language selection (`NERVE_LANGUAGE`) for voice flows; there is no user-facing auto-detect language mode.
+
 Local STT requires `ffmpeg` for audio format conversion (webm/ogg → 16kHz mono WAV). The installer handles this automatically. Models are downloaded from HuggingFace on first use.
+
+> **Migration note:** `LANGUAGE` is still read for backwards compatibility, but new writes use `NERVE_LANGUAGE`.
+
+Voice phrase overrides (stop/cancel/wake words) are stored at `~/.nerve/voice-phrases.json` and generated on first save from the UI.
 
 ### Network & Security
 
@@ -211,12 +219,14 @@ NERVE_SESSION_SECRET=$(openssl rand -hex 32)
 | `MEMORY_DIR` | `~/.openclaw/workspace/memory/` | Directory for daily memory files (`YYYY-MM-DD.md`) |
 | `SESSIONS_DIR` | `~/.openclaw/agents/main/sessions/` | Session transcript directory (scanned for token usage) |
 | `USAGE_FILE` | `~/.openclaw/token-usage.json` | Persistent cumulative token usage data |
+| `NERVE_VOICE_PHRASES_PATH` | `~/.nerve/voice-phrases.json` | Override location for per-language voice phrase overrides |
 | `WORKSPACE_ROOT` | *(auto-detected)* | Allowed base directory for git workdir registration. Auto-derived from `git worktree list` or parent of `process.cwd()` |
 
 ```env
 MEMORY_PATH=/custom/path/MEMORY.md
 MEMORY_DIR=/custom/path/memory/
 SESSIONS_DIR=/custom/path/sessions/
+NERVE_VOICE_PHRASES_PATH=/custom/path/voice-phrases.json
 ```
 
 ### TTS Cache

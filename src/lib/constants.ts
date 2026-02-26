@@ -20,23 +20,93 @@ export function escapeRegex(input: string): string {
   return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/** Build wake phrases for a given agent name */
-export function buildWakePhrases(agentName: string): string[] {
-  const name = agentName.trim().toLowerCase();
-  // Fallback to 'agent' if empty
-  if (!name) {
-    return ['hey agent', 'hey, agent'];
-  }
-  const phrases = [
-    `hey ${name}`,
-    `hey, ${name}`,
+const DEFAULT_WAKE_PREFIXES = ['hey'];
+
+/**
+ * Wake-word prefixes per language (ISO 639-1).
+ *
+ * English is always included as fallback for backwards compatibility.
+ */
+export const WAKE_PREFIXES_BY_LANGUAGE: Record<string, string[]> = {
+  en: ['hey'],
+  zh: ['嘿', '你好'],
+  hi: ['हे', 'अरे'],
+  es: ['oye', 'hola'],
+  fr: ['salut', 'hé'],
+  ar: ['يا', 'مرحبا'],
+  bn: ['এই', 'হেই'],
+  pt: ['oi', 'olá'],
+  ru: ['эй', 'привет'],
+  ja: ['ねえ', 'やあ'],
+  de: ['hey', 'hallo'],
+  tr: ['selam', 'hey'],
+};
+
+function normalizeLanguageCode(language: string): string {
+  const normalized = (language || '').trim().toLowerCase();
+  if (!normalized || normalized === 'auto') return 'en';
+  return normalized.split('-')[0] || 'en';
+}
+
+/**
+ * Build a single primary wake phrase for display and strict matching.
+ *
+ * If a custom wake phrase exists, it wins. Otherwise uses the first
+ * language-specific prefix with agent name (fallback: English "hey").
+ */
+export function buildPrimaryWakePhrase(
+  agentName: string,
+  language: string = 'en',
+  customWakePhrases?: string[],
+): string {
+  const custom = customWakePhrases
+    ?.map((phrase) => phrase.trim().toLowerCase())
+    .find(Boolean);
+
+  if (custom) return custom;
+
+  const name = agentName.trim().toLowerCase() || 'agent';
+  const lang = normalizeLanguageCode(language);
+  const prefix = WAKE_PREFIXES_BY_LANGUAGE[lang]?.[0]?.trim().toLowerCase() || DEFAULT_WAKE_PREFIXES[0];
+  return `${prefix} ${name}`;
+}
+
+function wakePhraseVariants(prefix: string, name: string): string[] {
+  // Include spaced + punctuation + no-space variants to handle STT quirks
+  return [
+    `${prefix} ${name}`,
+    `${prefix}, ${name}`,
+    `${prefix}${name}`,
+    `${prefix},${name}`,
   ];
-  // Add phonetic variation for names ending in 'a' (e.g., helena → helenah)
-  if (name.endsWith('a')) {
-    const variant = name.slice(0, -1) + 'ah';
-    phrases.push(`hey ${variant}`, `hey, ${variant}`);
+}
+
+/** Build wake phrases for a given agent name and language. */
+export function buildWakePhrases(agentName: string, language: string = 'en'): string[] {
+  const name = agentName.trim().toLowerCase() || 'agent';
+  const lang = normalizeLanguageCode(language);
+  const languagePrefixes = WAKE_PREFIXES_BY_LANGUAGE[lang] || [];
+  const prefixes = [...new Set([...languagePrefixes, ...DEFAULT_WAKE_PREFIXES])];
+
+  const phrases = new Set<string>();
+
+  for (const prefixRaw of prefixes) {
+    const prefix = prefixRaw.trim().toLowerCase();
+    if (!prefix) continue;
+    for (const variant of wakePhraseVariants(prefix, name)) {
+      phrases.add(variant);
+    }
   }
-  return phrases;
+
+  // Keep the legacy "Helena" -> "Helenah" phonetic variant for English wake words.
+  if (name.endsWith('a')) {
+    const variantName = name.slice(0, -1) + 'ah';
+    for (const variant of wakePhraseVariants('hey', variantName)) {
+      phrases.add(variant);
+    }
+  }
+
+  return [...phrases];
 }
 
 /**
@@ -49,21 +119,54 @@ export const DEFAULT_WAKE_PHRASES = buildWakePhrases('agent');
 export const WAKE_PHRASES = DEFAULT_WAKE_PHRASES;
 
 /**
- * Stop/cancel phrases moved to voice-phrases.json (server config).
- * Served to client via GET /api/voice-phrases.
- * Constants below kept only for test compatibility.
+ * Stop/cancel phrases are server-managed runtime config and served via
+ * GET /api/voice-phrases. Constants below are kept for test compatibility.
  */
-export const STOP_PHRASES = ["boom", "i'm done", "im done", "all right i'm done", "alright i'm done", "that's it", "thats it", "send it", "done"];
+export const STOP_PHRASES = ["boom", "i'm done", 'im done', "all right i'm done", "alright i'm done", "that's it", 'thats it', 'send it', 'done'];
 export const CANCEL_PHRASES = ['cancel', 'never mind', 'nevermind'];
 
-/** @deprecated Use buildStopRegexFromPhrases in useVoiceInput — kept for test compatibility */
-export function buildStopPhrasesRegex(agentName: string): RegExp {
-  const name = agentName.trim().toLowerCase();
-  const safeName = escapeRegex(name || 'agent');
-  const allPhrases = [...STOP_PHRASES, ...CANCEL_PHRASES];
-  const escaped = allPhrases.map(p => escapeRegex(p));
-  escaped.push(`hey ${safeName}`);
-  return new RegExp(`\\b(${escaped.join('|')})\\s*[.!?,]?\\s*$`, 'i');
+export interface StopPhrasesRegexOptions {
+  language?: string;
+  stopPhrases?: string[];
+  cancelPhrases?: string[];
+  wakePhrases?: string[];
+}
+
+/**
+ * Build a regex that strips a trailing stop/cancel/wake phrase from transcribed text.
+ *
+ * Note: this intentionally avoids `\b` word boundaries because they only work for
+ * ASCII word chars in JS and fail on many non-Latin scripts.
+ */
+export function buildStopPhrasesRegex(
+  agentName: string,
+  options: StopPhrasesRegexOptions = {},
+): RegExp {
+  const stopPhrases = options.stopPhrases ?? STOP_PHRASES;
+  const cancelPhrases = options.cancelPhrases ?? CANCEL_PHRASES;
+  const wakePhrases = options.wakePhrases?.length
+    ? options.wakePhrases
+    : buildWakePhrases(agentName, options.language);
+
+  const allPhrases = [...stopPhrases, ...cancelPhrases, ...wakePhrases]
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+
+  // Fallback regex that never matches if phrase arrays are unexpectedly empty.
+  if (allPhrases.length === 0) return /$^/u;
+
+  // Latin-script phrases get a leading boundary guard so short words like "done"
+  // don't over-match inside larger words (e.g. "undone").
+  const phrasePatterns = allPhrases.map((phrase) => {
+    const escaped = escapeRegex(phrase);
+    if (/[A-Za-z]/.test(phrase)) {
+      return `(?:^|[^\\p{L}\\p{N}])${escaped}`;
+    }
+    return escaped;
+  });
+
+  return new RegExp(`(?:${phrasePatterns.join('|')})\\s*[.!?,،؟。！？।…]*\\s*$`, 'iu');
 }
 
 /**

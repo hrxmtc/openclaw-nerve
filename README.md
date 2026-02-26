@@ -35,7 +35,7 @@ Messaging channels are great for chatting. But you can't watch charts render in 
 ## What makes it different
 
 ### Voice that actually works
-Talk to your agent. It talks back. Wake-word activation, on-device Whisper transcription with model selection (tiny, base, small) and GPU detection. No API key needed. Multi-provider TTS with Edge, OpenAI, and Replicate.
+Talk to your agent in 12 languages. Explicit language selection (no flaky auto-detect), wake-word activation, per-language stop/cancel phrases, and on-device Whisper transcription with model selection (tiny, base, small) plus GPU detection. No API key needed. Multi-provider TTS with Edge, OpenAI, and Replicate.
 
 ### Full workspace visibility
 Your sub-agent sessions, workspace files, memory, config, tools. All visible, all editable, all live. No file hunting, no guessing what it remembers.
@@ -59,7 +59,7 @@ Create recurring jobs and one-shot reminders. Every scheduled run shows up as it
 | **Search** | Full-text search across all messages in the current session |
 | **Images** | Paste from clipboard, drag & drop files, full-screen lightbox with download |
 | **Skills browser** | Browse installed skills, check status and requirements from the workspace panel |
-| **Local STT** | On-device Whisper — tiny, base, or small models with GPU detection and auto-download. No API key needed |
+| **Local STT** | On-device Whisper — tiny, base, or small models with multilingual support, explicit language selection, GPU detection, and auto-download. No API key needed |
 | **Code actions** | Copy or save-to-file buttons on every code block |
 | **API key management** | Add provider keys from settings — writes to .env and hot-reloads, no restart needed |
 | **14 themes** | Dark, light, and everything in between. Resizable panels, custom fonts |

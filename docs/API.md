@@ -16,6 +16,7 @@ Nerve exposes a REST + SSE API served by [Hono](https://hono.dev/) on the config
 - [Events (SSE)](#events-sse)
 - [Text-to-Speech](#text-to-speech)
 - [Transcription](#transcription)
+- [Language & Voice Phrases](#language--voice-phrases)
 - [Token Usage](#token-usage)
 - [Memories](#memories)
 - [Agent Log](#agent-log)
@@ -358,11 +359,14 @@ Transcribes audio using the configured STT provider.
 
 | Model | Size | Speed | Quality |
 |-------|------|-------|---------|
-| `tiny.en` (default) | 75 MB | Fastest | Good for clear speech |
-| `base.en` | 142 MB | Fast | Better accuracy |
-| `small.en` | 466 MB | Moderate | Best accuracy (CPU-intensive) |
+| `tiny` (default) | 75 MB | Fastest | Good baseline, multilingual |
+| `base` | 142 MB | Fast | Better conversational accuracy, multilingual |
+| `small` | 466 MB | Moderate | Best accuracy (CPU-intensive), multilingual |
+| `tiny.en` | 75 MB | Fastest | English-only variant |
+| `base.en` | 142 MB | Fast | English-only variant |
+| `small.en` | 466 MB | Moderate | English-only variant |
 
-Configure via `WHISPER_MODEL` env var. Models auto-download from HuggingFace on first use and are stored in `WHISPER_MODEL_DIR` (default `~/.nerve/models/`).
+Configure model via `WHISPER_MODEL`. Language hints come from `NERVE_LANGUAGE` (or `PUT /api/language` / `PUT /api/transcribe/config`). Models auto-download from HuggingFace on first use and are stored in `WHISPER_MODEL_DIR` (default `~/.nerve/models/`).
 
 **Request:** `multipart/form-data` with a `file` field containing audio data.
 
@@ -389,6 +393,197 @@ curl -X POST http://localhost:3080/api/transcribe \
 | 413 | File exceeds 12 MB |
 | 415 | Unsupported audio format |
 | 500 | API key not configured / transcription failed |
+
+### `GET /api/transcribe/config`
+
+Returns current STT runtime config + local model readiness/download state.
+
+**Response (example):**
+
+```json
+{
+  "provider": "local",
+  "model": "tiny",
+  "language": "en",
+  "modelReady": true,
+  "openaiKeySet": false,
+  "replicateKeySet": true,
+  "hasGpu": false,
+  "availableModels": {
+    "tiny": { "size": "75MB", "ready": true, "multilingual": true },
+    "base": { "size": "142MB", "ready": false, "multilingual": true },
+    "tiny.en": { "size": "75MB", "ready": true, "multilingual": false }
+  },
+  "download": null
+}
+```
+
+### `PUT /api/transcribe/config`
+
+Hot-reloads STT config at runtime.
+
+**Request Body (partial):**
+
+```json
+{
+  "provider": "local",
+  "model": "base",
+  "language": "tr"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `provider` | `"local" \| "openai"` | STT provider |
+| `model` | `string` | Whisper model id (`tiny`, `base`, `small`, plus `.en` variants) |
+| `language` | `string` | ISO 639-1 language code (`en`, `tr`, `de`, etc.) |
+
+Language changes persist to `.env` as `NERVE_LANGUAGE`.
+
+---
+
+## Language & Voice Phrases
+
+### `GET /api/language`
+
+Returns current language settings and compatibility flags.
+
+**Rate Limit:** General (60/min)
+
+**Response (example):**
+
+```json
+{
+  "language": "en",
+  "edgeVoiceGender": "female",
+  "supported": [
+    { "code": "en", "name": "English", "nativeName": "English" },
+    { "code": "tr", "name": "Turkish", "nativeName": "Türkçe" }
+  ],
+  "providers": {
+    "edge": true,
+    "qwen3": true,
+    "openai": true
+  }
+}
+```
+
+### `PUT /api/language`
+
+Hot-reloads language settings at runtime.
+
+**Rate Limit:** General (60/min)
+
+**Request Body (partial):**
+
+```json
+{
+  "language": "tr",
+  "edgeVoiceGender": "male"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `language` | `string` | ISO 639-1 language code |
+| `edgeVoiceGender` | `"female" \| "male"` | Preferred Edge TTS voice gender |
+
+Persists to `.env` keys:
+- `NERVE_LANGUAGE`
+- `EDGE_VOICE_GENDER`
+
+### `GET /api/language/support`
+
+Returns full provider × language support matrix and current local model state.
+
+**Rate Limit:** General (60/min)
+
+**Response (shape):**
+
+```json
+{
+  "languages": [
+    {
+      "code": "en",
+      "name": "English",
+      "nativeName": "English",
+      "edgeTtsVoices": { "female": "en-US-AriaNeural", "male": "en-US-GuyNeural" },
+      "stt": { "local": true, "openai": true },
+      "tts": { "edge": true, "qwen3": true, "openai": true }
+    }
+  ],
+  "currentModel": "tiny",
+  "isMultilingual": true
+}
+```
+
+### `GET /api/voice-phrases`
+
+Returns merged phrase set for recognition matching (selected language + English fallback).
+
+**Query Parameters:**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `lang` | `string` | No | ISO 639-1 code. Defaults to current server language |
+
+**Response:**
+
+```json
+{
+  "stopPhrases": ["gönder", "send it"],
+  "cancelPhrases": ["iptal", "cancel"],
+  "wakePhrases": ["selam kim"]
+}
+```
+
+### `GET /api/voice-phrases/status`
+
+Returns whether each supported language has custom phrase overrides configured.
+
+**Response (example):**
+
+```json
+{
+  "en": { "configured": false, "hasDefaults": true },
+  "tr": { "configured": true, "hasDefaults": true }
+}
+```
+
+### `GET /api/voice-phrases/:lang`
+
+Returns language-only phrase config (no English merge).
+
+**Response:**
+
+```json
+{
+  "source": "custom",
+  "stopPhrases": ["gönder"],
+  "cancelPhrases": ["iptal"],
+  "wakePhrases": ["selam kim"]
+}
+```
+
+`source` is one of `custom`, `defaults`, or `none`.
+
+### `PUT /api/voice-phrases/:lang`
+
+Saves per-language custom phrase overrides.
+
+**Request Body (partial):**
+
+```json
+{
+  "stopPhrases": ["gönder"],
+  "cancelPhrases": ["iptal"],
+  "wakePhrases": ["selam kim"]
+}
+```
+
+At least one of `stopPhrases`, `cancelPhrases`, or `wakePhrases` is required.
+
+Custom phrase overrides are stored in `~/.nerve/voice-phrases.json` (created on first save).
 
 ---
 

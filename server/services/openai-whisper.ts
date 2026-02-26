@@ -23,11 +23,13 @@ export interface WhisperError {
 /**
  * Transcribe audio via OpenAI Whisper API.
  * Accepts raw file data and builds a multipart request.
+ * When a language hint is provided, it's passed to the API for better accuracy.
  */
 export async function transcribe(
   fileData: Buffer,
   filename: string,
   mimeType: string = 'audio/webm',
+  language?: string,
 ): Promise<WhisperResult | WhisperError> {
   if (!config.openaiApiKey) {
     return { ok: false, status: 500, message: 'OpenAI API key not configured' };
@@ -40,10 +42,18 @@ export async function transcribe(
   const header = Buffer.from(
     `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${safeFilename}"\r\nContent-Type: ${mimeType}\r\n\r\n`,
   );
-  const footer = Buffer.from(
-    `\r\n--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\nwhisper-1\r\n--${boundary}--\r\n`,
-  );
-  const payload = Buffer.concat([header, fileData, footer]);
+
+  // Model field
+  let footer = `\r\n--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\nwhisper-1\r\n`;
+
+  // Optional language hint (ISO 639-1) — improves accuracy when known
+  const effectiveLang = language || config.language;
+  if (effectiveLang) {
+    footer += `--${boundary}\r\nContent-Disposition: form-data; name="language"\r\n\r\n${effectiveLang}\r\n`;
+  }
+
+  footer += `--${boundary}--\r\n`;
+  const payload = Buffer.concat([header, fileData, Buffer.from(footer)]);
 
   const resp = await fetch(OPENAI_WHISPER_URL, {
     method: 'POST',
