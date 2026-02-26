@@ -38,7 +38,7 @@ describe('invokeGatewayTool', () => {
     );
   });
 
-  it('includes Authorization header when token is configured', async () => {
+  it('includes correct headers in request', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ ok: true, result: null }),
@@ -51,7 +51,29 @@ describe('invokeGatewayTool', () => {
     const opts = callArgs[1] as RequestInit;
     const headers = opts.headers as Record<string, string>;
     expect(headers['Content-Type']).toBe('application/json');
-    expect(headers['Authorization']).toMatch(/^Bearer /);
+  });
+
+  it('includes Authorization header when gateway token is set', async () => {
+    // Re-import with a token configured
+    vi.doMock('./config.js', () => ({
+      config: {
+        gatewayUrl: 'http://localhost:3100',
+        gatewayToken: 'my-secret-token',
+      },
+    }));
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, result: null }),
+    });
+
+    const { invokeGatewayTool } = await import('./gateway-client.js');
+    await invokeGatewayTool('test_tool', {});
+
+    const callArgs = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const opts = callArgs[1] as RequestInit;
+    const headers = opts.headers as Record<string, string>;
+    expect(headers['Authorization']).toBe('Bearer my-secret-token');
   });
 
   it('throws on HTTP error response', async () => {
