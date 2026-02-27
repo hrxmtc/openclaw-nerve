@@ -163,6 +163,34 @@ function createGatewayRelay(
   let clientToGatewayCount = 0;
   let gatewayToClientCount = 0;
 
+  // ─── Keepalive: ping both sides every 30s, kill dead connections ────────
+  const PING_INTERVAL = 30_000;
+  const PONG_TIMEOUT = 10_000;
+  let clientAlive = true;
+  let gatewayAlive = true;
+
+  clientWs.on('pong', () => { clientAlive = true; });
+
+  const pingTimer = setInterval(() => {
+    // Check client
+    if (!clientAlive) {
+      console.log(`${tag} Client pong timeout — terminating`);
+      clientWs.terminate();
+      return;
+    }
+    clientAlive = false;
+    if (clientWs.readyState === WebSocket.OPEN) clientWs.ping();
+
+    // Check gateway
+    if (gwWs && !gatewayAlive) {
+      console.log(`${tag} Gateway pong timeout — terminating`);
+      gwWs.terminate();
+      return;
+    }
+    gatewayAlive = false;
+    if (gwWs?.readyState === WebSocket.OPEN) gwWs.ping();
+  }, PING_INTERVAL);
+
   let gwWs: WebSocket;
   let challengeNonce: string | null = null;
   let handshakeComplete = false;
@@ -184,6 +212,8 @@ function createGatewayRelay(
     gwWs = new WebSocket(targetUrl.toString(), {
       headers: { Origin: clientOrigin },
     });
+
+    gwWs.on('pong', () => { gatewayAlive = true; });
 
     // Gateway → Client
     gwWs.on('message', (data: Buffer | string, isBinary: boolean) => {
@@ -315,12 +345,14 @@ function createGatewayRelay(
   });
 
   clientWs.on('close', (code, reason) => {
+    clearInterval(pingTimer);
     const duration = Date.now() - connStartTime;
     console.log(`${tag} Client closed: code=${code}, reason=${reason?.toString()}`);
     console.log(`${tag} Summary: duration=${duration}ms, client->gw=${clientToGatewayCount}, gw->client=${gatewayToClientCount}`);
     if (gwWs) gwWs.close();
   });
   clientWs.on('error', (err) => {
+    clearInterval(pingTimer);
     console.error(`${tag} Client error:`, err.message);
     if (gwWs) gwWs.close();
   });

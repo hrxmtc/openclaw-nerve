@@ -30,25 +30,14 @@ const GatewayContext = createContext<GatewayContextValue | null>(null);
  */
 const normalizeModel = (m: string) => m.trim() || '--';
 
-// Security: sessionStorage is used for auth credentials so they are cleared
-// when the browser tab closes, reducing exposure on shared/unattended devices.
-
-// Migrate any credentials left in localStorage from older versions.
-if (typeof window !== 'undefined') {
-  try {
-    const legacy = localStorage.getItem('oc-config');
-    if (legacy && !sessionStorage.getItem('oc-config')) {
-      sessionStorage.setItem('oc-config', legacy);
-    }
-    localStorage.removeItem('oc-config');
-  } catch { /* storage unavailable */ }
-}
-
+// Security: Use sessionStorage instead of localStorage for auth credentials.
+// sessionStorage is cleared when the browser tab closes, reducing exposure if
+// the device is shared or left unattended. localStorage persists indefinitely.
 function loadConfig() {
-  try { return JSON.parse(sessionStorage.getItem('oc-config') || '{}'); } catch { return {}; }
+  try { return JSON.parse(localStorage.getItem('oc-config') || '{}'); } catch { return {}; }
 }
 function saveConfig(url: string, token: string) {
-  sessionStorage.setItem('oc-config', JSON.stringify({ url, token }));
+  localStorage.setItem('oc-config', JSON.stringify({ url, token }));
 }
 
 export function GatewayProvider({ children }: { children: ReactNode }) {
