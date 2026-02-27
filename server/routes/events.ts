@@ -14,6 +14,7 @@
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { EventEmitter } from 'node:events';
+import { randomUUID } from 'node:crypto';
 
 const app = new Hono();
 
@@ -56,6 +57,9 @@ export function broadcast(event: string, data: unknown = {}): void {
 
 const PING_INTERVAL_MS = 30_000;
 
+/** Track active SSE client connections. Exported for testing. */
+export const _sseClients = new Map<string, { connectedAt: number }>();
+
 app.get('/api/events', async (c) => {
   c.header('Content-Type', 'text/event-stream');
   c.header('Cache-Control', 'no-cache');
@@ -63,8 +67,13 @@ app.get('/api/events', async (c) => {
   c.header('X-Accel-Buffering', 'no');
 
   return streamSSE(c, async (stream) => {
+    const clientId = randomUUID().slice(0, 8);
+    const tag = `[sse:${clientId}]`;
     let connected = true;
     let resolveDisconnect: (() => void) | undefined;
+
+    _sseClients.set(clientId, { connectedAt: Date.now() });
+    console.log(`${tag} Client connected (active=${_sseClients.size})`);
 
     const onMessage = (payload: SSEEvent) => {
       if (!connected) return;
@@ -80,6 +89,8 @@ app.get('/api/events', async (c) => {
       connected = false;
       clearInterval(pingTimer);
       broadcaster.off('message', onMessage);
+      _sseClients.delete(clientId);
+      console.log(`${tag} Client disconnected (active=${_sseClients.size})`);
       resolveDisconnect?.();
     }
 

@@ -123,7 +123,7 @@ Nerve proxies WebSocket traffic to your gateway and adds its own REST layer.
 
 ## Security
 
-Nerve binds to `localhost` by default — only you can access it. When you expose it to the network (`HOST=0.0.0.0`), built-in password authentication protects all endpoints. The setup wizard auto-prompts for a password when network access is configured.
+Nerve binds to `127.0.0.1` (localhost) by default — only you can access it. When you expose it to the network (`HOST=0.0.0.0`), built-in password authentication protects all endpoints. The setup wizard auto-prompts for a password when network access is configured.
 
 - **Session cookies** — `HttpOnly`, `SameSite=Strict`, HMAC-SHA256 signed
 - **Password storage** — scrypt with 32-byte salt

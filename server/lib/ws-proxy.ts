@@ -144,7 +144,7 @@ export function setupWebSocketProxy(server: HttpServer | HttpsServer): void {
     const scheme = isEncrypted ? 'https' : 'http';
     const clientOrigin = req.headers.origin || `${scheme}://${req.headers.host}`;
 
-    createGatewayRelay(clientWs, targetUrl, clientOrigin);
+    createGatewayRelay(clientWs, targetUrl, clientOrigin, connId);
   });
 }
 
@@ -164,7 +164,40 @@ function createGatewayRelay(
   clientWs: WebSocket,
   targetUrl: URL,
   clientOrigin: string,
+  connId: string,
 ): void {
+  const tag = `[ws-proxy:${connId}]`;
+  const connStartTime = Date.now();
+  let clientToGatewayCount = 0;
+  let gatewayToClientCount = 0;
+
+  // ─── Keepalive: ping both sides every 30s, kill dead connections ────────
+  const PING_INTERVAL = 30_000;
+  let clientAlive = true;
+  let gatewayAlive = true;
+
+  clientWs.on('pong', () => { clientAlive = true; });
+
+  const pingTimer = setInterval(() => {
+    // Check client
+    if (!clientAlive) {
+      console.log(`${tag} Client pong timeout — terminating`);
+      clientWs.terminate();
+      return;
+    }
+    clientAlive = false;
+    if (clientWs.readyState === WebSocket.OPEN) clientWs.ping();
+
+    // Check gateway
+    if (gwWs && !gatewayAlive) {
+      console.log(`${tag} Gateway pong timeout — terminating`);
+      gwWs.terminate();
+      return;
+    }
+    gatewayAlive = false;
+    if (gwWs?.readyState === WebSocket.OPEN) gwWs.ping();
+  }, PING_INTERVAL);
+
   let gwWs: WebSocket;
   let challengeNonce: string | null = null;
   let handshakeComplete = false;
@@ -239,6 +272,7 @@ function createGatewayRelay(
   }
 
   function openGateway(): void {
+    gatewayAlive = true;
     challengeNonce = null;
     handshakeComplete = false;
     connectSent = false;
@@ -247,6 +281,8 @@ function createGatewayRelay(
     gwWs = new WebSocket(targetUrl.toString(), {
       headers: { Origin: clientOrigin },
     });
+
+    gwWs.on('pong', () => { gatewayAlive = true; });
 
     // Gateway → Client
     gwWs.on('message', (data: Buffer | string, isBinary: boolean) => {
@@ -265,6 +301,7 @@ function createGatewayRelay(
       }
 
       if (clientWs.readyState === WebSocket.OPEN) {
+        gatewayToClientCount++;
         clientWs.send(isBinary ? data : data.toString());
       }
     });
@@ -290,14 +327,14 @@ function createGatewayRelay(
     });
 
     gwWs.on('error', (err) => {
-      console.error('[ws-proxy] Gateway error:', err.message);
+      console.error(`${tag} Gateway error:`, err.message);
       clearChallengeTimer();
       if (!hasRetried || handshakeComplete) clientWs.close();
     });
 
     gwWs.on('close', (code, reason) => {
       const reasonStr = reason?.toString() || '';
-      console.log(`[ws-proxy] Gateway closed: code=${code}, reason=${reasonStr}`);
+      console.log(`${tag} Gateway closed: code=${code}, reason=${reasonStr}`);
       clearChallengeTimer();
 
       // Device auth rejected — retry without device identity
@@ -309,7 +346,7 @@ function createGatewayRelay(
       );
 
       if (useDeviceIdentity && !hasRetried && isDeviceRejection && clientWs.readyState === WebSocket.OPEN) {
-        console.log(`[ws-proxy] Device rejected (${reasonStr}) — retrying without device identity`);
+        console.log(`${tag} Device rejected (${reasonStr}) — retrying without device identity`);
         useDeviceIdentity = false;
         hasRetried = true;
         openGateway();
@@ -406,17 +443,22 @@ function createGatewayRelay(
       } catch { /* pass through */ }
     }
 
+    clientToGatewayCount++;
     gwWs.send(isBinary ? data : data.toString());
   });
 
   clientWs.on('close', (code, reason) => {
-    console.log(`[ws-proxy] Client closed: code=${code}, reason=${reason?.toString()}`);
+    clearInterval(pingTimer);
     clearChallengeTimer();
+    const duration = Date.now() - connStartTime;
+    console.log(`${tag} Client closed: code=${code}, reason=${reason?.toString()}`);
+    console.log(`${tag} Summary: duration=${duration}ms, client->gw=${clientToGatewayCount}, gw->client=${gatewayToClientCount}`);
     if (gwWs) gwWs.close();
   });
   clientWs.on('error', (err) => {
-    console.error('[ws-proxy] Client error:', err.message);
+    clearInterval(pingTimer);
     clearChallengeTimer();
+    console.error(`${tag} Client error:`, err.message);
     if (gwWs) gwWs.close();
   });
 
@@ -433,7 +475,7 @@ interface ConnectParams {
   auth?: { token?: string };
 }
 
-function injectDeviceIdentity(msg: Record<string, unknown>, nonce: string): Record<string, unknown> {
+function injectDeviceIdentity(msg: Record<string, unknown>, nonce: string, logTag = '[ws-proxy]'): Record<string, unknown> {
   const params = (msg.params || {}) as ConnectParams;
   const clientId = params.client?.id || 'nerve-ui';
   const clientMode = params.client?.mode || 'webchat';
@@ -455,7 +497,7 @@ function injectDeviceIdentity(msg: Record<string, unknown>, nonce: string): Reco
     nonce,
   });
 
-  console.log(`[ws-proxy] Injected device identity: ${device.id.substring(0, 12)}…`);
+  console.log(`${logTag} Injected device identity: ${device.id.substring(0, 12)}...`);
 
   return {
     ...msg,

@@ -11,7 +11,7 @@ describe('SSE events', () => {
     const mod = await import('./events.js');
     const app = new Hono();
     app.route('/', mod.default);
-    return { app, broadcaster: mod.broadcaster, broadcast: mod.broadcast };
+    return { app, broadcaster: mod.broadcaster, broadcast: mod.broadcast, _sseClients: mod._sseClients };
   }
 
   describe('broadcaster', () => {
@@ -80,6 +80,26 @@ describe('SSE events', () => {
       expect(text).toContain('event: connected');
 
       reader.cancel();
+    });
+  });
+
+  describe('SSE client tracking (observability)', () => {
+    it('exports _sseClients map for connection tracking', async () => {
+      const { _sseClients } = await importEvents();
+      expect(_sseClients).toBeDefined();
+      expect(_sseClients).toBeInstanceOf(Map);
+    });
+
+    it('_sseClients stores entries with connectedAt timestamp shape', async () => {
+      const { _sseClients } = await importEvents();
+      // Simulate what the SSE handler does
+      const testId = 'abc12345';
+      _sseClients.set(testId, { connectedAt: Date.now() });
+      expect(_sseClients.size).toBeGreaterThanOrEqual(1);
+      const entry = _sseClients.get(testId);
+      expect(entry).toBeTruthy();
+      expect(entry!.connectedAt).toBeGreaterThan(0);
+      _sseClients.delete(testId);
     });
   });
 });

@@ -550,3 +550,113 @@ describe('ws-proxy', () => {
     });
   });
 });
+
+// ── Observability tests (appended) ──────────────────────────────────
+// These are added in a separate describe block outside the main one
+// since the main describe block is already closed.
+
+describe('ws-proxy observability', () => {
+  let mockGw2: MockGateway;
+  let proxyServer2: Server;
+  let proxyPort2: number;
+
+  beforeAll(async () => {
+    mockGw2 = new MockGateway();
+    await mockGw2.start();
+  });
+
+  afterAll(async () => {
+    closeAllWebSockets();
+    await mockGw2.close();
+  });
+
+  beforeEach(async () => {
+    (config as { auth: boolean }).auth = false;
+    proxyServer2 = createServer();
+    setupWebSocketProxy(proxyServer2);
+    await new Promise<void>((resolve) => {
+      proxyServer2.listen(0, '127.0.0.1', () => resolve());
+    });
+    const addr = proxyServer2.address();
+    proxyPort2 = typeof addr === 'object' && addr ? addr.port : 0;
+  });
+
+  afterEach(async () => {
+    closeAllWebSockets();
+    await new Promise<void>((resolve) => {
+      proxyServer2.close(() => resolve());
+    });
+  });
+
+  it('logs connection ID in [ws-proxy:XXXXXXXX] format on new connection', async () => {
+    const logSpy = vi.spyOn(console, 'log');
+    const ws = new WebSocket(
+      `ws://127.0.0.1:${proxyPort2}/ws?target=${encodeURIComponent(mockGw2.url + '/ws')}`,
+    );
+    await waitForMessage(ws);
+
+    const newConnLog = logSpy.mock.calls.find(
+      (args) => typeof args[0] === 'string' && args[0].includes('New connection'),
+    );
+    expect(newConnLog).toBeTruthy();
+    expect(newConnLog![0]).toMatch(/\[ws-proxy:[0-9a-f]{8}\]/);
+
+    ws.close();
+    await new Promise((r) => setTimeout(r, 50));
+    logSpy.mockRestore();
+  });
+
+  it('logs summary with duration and message counts on close', async () => {
+    const logSpy = vi.spyOn(console, 'log');
+    const ws = new WebSocket(
+      `ws://127.0.0.1:${proxyPort2}/ws?target=${encodeURIComponent(mockGw2.url + '/ws')}`,
+    );
+    await waitForMessage(ws);
+
+    const closePromise = waitForClose(ws);
+    ws.close();
+    await closePromise;
+    await new Promise((r) => setTimeout(r, 100));
+
+    const summaryLog = logSpy.mock.calls.find(
+      (args) => typeof args[0] === 'string' && args[0].includes('Summary:'),
+    );
+    expect(summaryLog).toBeTruthy();
+    expect(summaryLog![0]).toMatch(/\[ws-proxy:[0-9a-f]{8}\] Summary: duration=\d+ms/);
+    expect(summaryLog![0]).toContain('client->gw=');
+    expect(summaryLog![0]).toContain('gw->client=');
+
+    logSpy.mockRestore();
+  });
+
+  it('uses unique connection IDs for concurrent connections', async () => {
+    const logSpy = vi.spyOn(console, 'log');
+
+    const ws1 = new WebSocket(
+      `ws://127.0.0.1:${proxyPort2}/ws?target=${encodeURIComponent(mockGw2.url + '/ws')}`,
+    );
+    await waitForMessage(ws1);
+
+    const ws2 = new WebSocket(
+      `ws://127.0.0.1:${proxyPort2}/ws?target=${encodeURIComponent(mockGw2.url + '/ws')}`,
+    );
+    await waitForMessage(ws2);
+
+    const connLogs = logSpy.mock.calls.filter(
+      (args) => typeof args[0] === 'string' && args[0].includes('New connection'),
+    );
+    expect(connLogs.length).toBeGreaterThanOrEqual(2);
+
+    const ids = connLogs.map((args) => {
+      const match = (args[0] as string).match(/\[ws-proxy:([0-9a-f]{8})\]/);
+      return match?.[1];
+    });
+    const uniqueIds = new Set(ids);
+    expect(uniqueIds.size).toBe(ids.length);
+
+    ws1.close();
+    ws2.close();
+    await new Promise((r) => setTimeout(r, 50));
+    logSpy.mockRestore();
+  });
+});

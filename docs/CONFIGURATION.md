@@ -140,8 +140,9 @@ TTS provider fallback chain (when no explicit provider is requested):
 |----------|---------|-------------|
 | `STT_PROVIDER` | `local` | STT provider: `local` (whisper.cpp, no API key needed) or `openai` (requires `OPENAI_API_KEY`) |
 | `WHISPER_MODEL` | `tiny` | Local whisper model: `tiny` (75 MB), `base` (142 MB), or `small` (466 MB) — multilingual variants. English-only variants (`tiny.en`, `base.en`, `small.en`) are also available. |
-| `WHISPER_MODEL_DIR` | `~/.nerve/models/` | Directory for downloaded whisper model files |
+| `WHISPER_MODEL_DIR` | `~/.nerve/models` | Directory for downloaded whisper model files |
 | `NERVE_LANGUAGE` | `en` | Preferred voice language (ISO 639-1). Legacy `LANGUAGE` is still accepted but deprecated |
+| `EDGE_VOICE_GENDER` | `female` | Edge TTS voice gender: `female` or `male` |
 
 ```env
 # Use local speech-to-text (no API key needed)
@@ -194,6 +195,14 @@ NERVE_PASSWORD_HASH=<generated-by-setup>
 NERVE_SESSION_SECRET=<generated-by-setup>
 ```
 
+#### `NERVE_ALLOW_INSECURE`
+
+When `HOST=0.0.0.0` and `NERVE_AUTH=false`, the server **refuses to start** to prevent accidentally exposing all endpoints without authentication. Set `NERVE_ALLOW_INSECURE=true` to override this safety check. **Not recommended for production.**
+
+```env
+NERVE_ALLOW_INSECURE=true
+```
+
 **Quick enable (with gateway token as password):**
 
 ```env
@@ -210,6 +219,26 @@ NERVE_SESSION_SECRET=$(openssl rand -hex 32)
 - If no password hash is set, the gateway token is accepted as a fallback password
 
 **Setup wizard:** When the access mode is set to a non-localhost option, the wizard prompts to set a password and auto-generates the session secret.
+
+### API Base URLs
+
+Override these for proxies, self-hosted endpoints, or API-compatible alternatives.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible API base URL |
+| `REPLICATE_BASE_URL` | `https://api.replicate.com/v1` | Replicate API base URL |
+
+```env
+OPENAI_BASE_URL=https://api.openai.com/v1
+REPLICATE_BASE_URL=https://api.replicate.com/v1
+```
+
+### Codex Integration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CODEX_DIR` | `.codex` | Directory for Codex integration files |
 
 ### File Paths
 
@@ -305,9 +334,21 @@ SSL_PORT=3443
 HOST=0.0.0.0
 AGENT_NAME=Friday
 
+# Authentication (recommended when HOST=0.0.0.0)
+NERVE_AUTH=true
+NERVE_PASSWORD_HASH=<generated-by-setup>
+NERVE_SESSION_SECRET=<generated-by-setup>
+NERVE_SESSION_TTL=2592000000
+
 # API Keys
 OPENAI_API_KEY=sk-...
 REPLICATE_API_TOKEN=r8_...
+
+# Speech / Language
+STT_PROVIDER=local
+WHISPER_MODEL=tiny
+NERVE_LANGUAGE=en
+EDGE_VOICE_GENDER=female
 
 # Network (Tailscale example)
 ALLOWED_ORIGINS=http://100.64.0.5:3080
@@ -320,6 +361,6 @@ TTS_CACHE_MAX=200
 
 # Custom Paths (optional)
 MEMORY_PATH=/home/user/.openclaw/workspace/MEMORY.md
-MEMORY_DIR=/home/user/.openclaw/workspace/memory/
-SESSIONS_DIR=/home/user/.openclaw/agents/main/sessions/
+MEMORY_DIR=/home/user/.openclaw/workspace/memory
+SESSIONS_DIR=/home/user/.openclaw/agents/main/sessions
 ```
