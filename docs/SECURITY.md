@@ -62,7 +62,7 @@ Security is enforced through network-level controls:
 1. **Localhost binding** — The server binds to `127.0.0.1` by default. Only local processes can connect.
 2. **CORS allowlist** — Browsers enforce the Origin check. Only configured origins receive CORS headers.
 3. **Gateway token isolation** — The sensitive `GATEWAY_TOKEN` is never sent to the browser. Instead, Nerve injects it server-side into the WebSocket connection upgrade for trusted clients.
-4. **Session storage** — The frontend stores the gateway token in `sessionStorage` (cleared when the tab closes), not `localStorage`.
+4. **Client config persistence** — The frontend stores the gateway URL and optional manual token in `localStorage` as `oc-config`. Trusted official-gateway flows usually keep the token empty because server-side injection handles auth.
 
 ### When Auth is Enabled
 
@@ -118,7 +118,7 @@ CORS is enforced on all requests via Hono's CORS middleware.
 
 **Additional origins** via `ALLOWED_ORIGINS` env var (comma-separated). Each entry is normalised through the `URL` constructor:
 
-```env
+```bash
 ALLOWED_ORIGINS=http://100.64.0.5:3080,https://my-server.tailnet.ts.net:3443
 ```
 
@@ -287,7 +287,7 @@ The WebSocket proxy (connecting the frontend to the OpenClaw gateway) restricts 
 
 **Extend via** `WS_ALLOWED_HOSTS` env var (comma-separated):
 
-```env
+```bash
 WS_ALLOWED_HOSTS=my-server.tailnet.ts.net,100.64.0.5
 ```
 
@@ -298,13 +298,15 @@ This prevents the proxy from being used to connect to arbitrary external hosts.
 Nerve performs **server-side token injection** to provide a zero-config connection experience for local and authenticated users without exposing the `GATEWAY_TOKEN` to the browser storage.
 
 **Injection Logic:**
-1. The WebSocket proxy identifies if a connection is **trusted**.
-   - **Local Trusted**: The client IP (resolved via `TRUSTED_PROXIES` if applicable) is a loopback address (`127.0.0.1` / `::1`).
-   - **Session Trusted**: The request carries a valid session cookie (`NERVE_AUTH=true`).
-2. If trusted and a `GATEWAY_TOKEN` is configured, Nerve intercepts the client's `connect` request.
-3. If the client did not provide a token, Nerve injects the server's `GATEWAY_TOKEN`.
+1. `GET /api/connect-defaults` returns the official gateway WebSocket URL, `token: null`, and a `serverSideAuth` flag.
+2. The WebSocket proxy only injects `GATEWAY_TOKEN` when all of these are true:
+   - a gateway token is configured on the server
+   - the request is trusted (`loopback` access or an authenticated session)
+   - the WebSocket upgrade `Origin` is allowed
+3. For the official gateway URL, the browser connects with an empty token when `serverSideAuth=true`.
+4. Custom gateway URLs or untrusted contexts still require manual token entry in the connect dialog.
 
-This allows the UI to hide the "Auth Token" field and auto-connect for trusted users while keeping the token strictly on the server.
+This keeps the managed gateway token on the server while still allowing explicit manual credentials for unsupported or custom connection paths.
 
 ### Device Identity & Gateway Scopes
 
@@ -374,10 +376,10 @@ HSTS is always sent (`max-age=31536000; includeSubDomains`), even over HTTP. Bro
 
 | Secret | Storage | Exposure |
 |--------|---------|----------|
-| `GATEWAY_TOKEN` | `.env` file (chmod 600) | Only returned to loopback clients via `/api/connect-defaults`. Never logged. |
+| `GATEWAY_TOKEN` | `.env` file (chmod 600) | Used server-side for trusted official-gateway connections. `/api/connect-defaults` returns `token: null`. Never logged. |
 | `OPENAI_API_KEY` | `.env` file | Used server-side only. Never sent to clients. |
 | `REPLICATE_API_TOKEN` | `.env` file | Used server-side only. Never sent to clients. |
-| Gateway token (client) | `sessionStorage` | Cleared when browser tab closes. Not persisted to disk. |
+| Gateway URL + optional manual token | `localStorage` (`oc-config`) | Used for reconnects. Trusted official-gateway flows usually keep the token empty; manually entered custom-gateway tokens persist until cleared. |
 
 The setup wizard applies `chmod 600` to `.env` and backup files, restricting read access to the file owner.
 
@@ -388,7 +390,7 @@ The setup wizard applies `chmod 600` to `.env` and backup files, restricting rea
 | Measure | Details |
 |---------|---------|
 | **DOMPurify** | All rendered HTML (agent messages, markdown) passes through DOMPurify with a strict tag/attribute allowlist |
-| **Session storage** | Gateway token stored in `sessionStorage`, not `localStorage` — cleared on tab close |
+| **Local storage** | Connection preferences are stored in `localStorage` as `oc-config`. The official managed gateway path can keep the token empty; manually entered custom tokens may persist until cleared |
 | **CSP enforcement** | `script-src 'self' https://s3.tradingview.com` blocks inline scripts and limits external scripts to TradingView chart widgets only |
 | **No eval** | No use of `eval()`, `Function()`, or `innerHTML` with unsanitised content |
 
