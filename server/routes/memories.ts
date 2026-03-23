@@ -288,7 +288,6 @@ app.get('/api/memories', rateLimitGeneral, async (c) => {
   if (workspace instanceof Response) return workspace;
 
   const memories: MemoryItem[] = [];
-  let isRemote = false;
 
   // Parse MEMORY.md — try local first, then gateway fallback
   let content = await readText(workspace.memoryPath);
@@ -296,7 +295,6 @@ app.get('/api/memories', rateLimitGeneral, async (c) => {
     // Local read failed — try gateway
     const isLocal = await isWorkspaceLocal(path.dirname(workspace.memoryPath));
     if (!isLocal) {
-      isRemote = true;
       try {
         const file = await gatewayFilesGet(workspace.agentId, 'MEMORY.md');
         if (file) {
@@ -337,7 +335,7 @@ app.get('/api/memories', rateLimitGeneral, async (c) => {
     // Memory dir may not exist — that's fine
   }
 
-  return c.json(isRemote ? { memories, remoteWorkspace: true } : memories);
+  return c.json(memories);
 });
 
 /**
