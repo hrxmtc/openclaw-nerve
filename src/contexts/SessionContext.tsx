@@ -497,6 +497,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, [connectionState, listAuthoritativeSessions, setCurrentSession]);
 
+  const refreshSessionsRef = useRef(refreshSessions);
+  useEffect(() => {
+    refreshSessionsRef.current = refreshSessions;
+  }, [refreshSessions]);
+
   // Update session in list from WebSocket event data
   const updateSessionFromEvent = useCallback((sessionKey: string, updates: Partial<Session>) => {
     setSessions(prev => {
@@ -504,7 +509,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (idx === -1) {
         // New session appeared that we don't have - schedule a refresh
         // Use setTimeout to avoid calling during render
-        setTimeout(() => refreshSessions(), 100);
+        setTimeout(() => {
+          void refreshSessionsRef.current();
+        }, 100);
         return prev;
       }
       
@@ -523,7 +530,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         return { ...s, ...updates, lastActivity: Date.now() };
       });
     });
-  }, [refreshSessions]);
+  }, []);
 
   // Extract session updates (state + token data) from a typed agent event payload
   const extractSessionUpdates = useCallback((state: string | undefined, payload: AgentEventPayload | ChatEventPayload): Partial<Session> => {
@@ -540,9 +547,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
     delayedRefreshTimeoutRef.current = setTimeout(() => {
       delayedRefreshTimeoutRef.current = null;
-      refreshSessions();
+      void refreshSessionsRef.current();
     }, 1500);
-  }, [refreshSessions]);
+  }, []);
 
   // Subscribe to gateway events for granular status tracking + session state sync + agent log + event log
   useEffect(() => {
@@ -664,9 +671,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       feedAgentLog(evt, p);
     });
 
-    // Cleanup: cancel all pending DONE→IDLE timeouts
     return () => {
       unsub();
+    };
+  }, [subscribe, addEvent, setGranularStatus, markSessionUnread, pingSession, feedAgentLog, updateSessionFromEvent, extractSessionUpdates, refreshSessions, scheduleDelayedRefresh]);
+
+  useEffect(() => {
+    return () => {
       for (const key of Object.keys(doneTimeoutsRef.current)) {
         clearTimeout(doneTimeoutsRef.current[key]);
       }
@@ -676,7 +687,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         delayedRefreshTimeoutRef.current = null;
       }
     };
-  }, [subscribe, addEvent, setGranularStatus, markSessionUnread, pingSession, feedAgentLog, updateSessionFromEvent, extractSessionUpdates, refreshSessions, scheduleDelayedRefresh]);
+  }, []);
 
   // Poll sessions when connected (reduced to 30s - WebSocket events provide real-time updates)
   useEffect(() => {
