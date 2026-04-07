@@ -45,7 +45,7 @@ import {
   updateHighestSeq,
 } from '@/features/chat/operations';
 import { generateMsgId } from '@/features/chat/types';
-import type { ImageAttachment, ChatMsg } from '@/features/chat/types';
+import type { ImageAttachment, ChatMsg, OutgoingUploadPayload } from '@/features/chat/types';
 import type { RecoveryReason, RunState } from '@/features/chat/operations';
 
 import { useChatMessages, mergeFinalMessages, patchThinkingDuration } from '@/hooks/useChatMessages';
@@ -446,7 +446,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         }
 
         const finalData = extractFinalMessage(cp);
-        const finalMessages = processChatMessages(extractFinalMessages(cp), currentSession);
+        const finalMessages = processChatMessages(extractFinalMessages(cp));
 
         if (finalMessages.length > 0) {
           const merged = mergeFinalMessages(msgHook.getAllMessages(), finalMessages);
@@ -481,7 +481,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
         const partialMessagesRaw = extractFinalMessages(cp);
         if (partialMessagesRaw.length > 0) {
-          const partialMessages = processChatMessages(partialMessagesRaw, currentSession);
+          const partialMessages = processChatMessages(partialMessagesRaw);
           if (partialMessages.length > 0) {
             const merged = mergeFinalMessages(msgHook.getAllMessages(), partialMessages);
             msgHook.applyMessageWindow(merged, false);
@@ -557,10 +557,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   ]);
 
   // ─── Send message ─────────────────────────────────────────────────────────
-  const handleSend = useCallback(async (text: string, images?: ImageAttachment[]) => {
+  const handleSend = useCallback(async (text: string, images?: ImageAttachment[], uploadPayload?: OutgoingUploadPayload) => {
     ttsHook.trackVoiceMessage(text);
 
-    const { msg: userMsg, tempId } = buildUserMessage({ text, images });
+    const { msg: userMsg, tempId } = buildUserMessage({ text, images, uploadPayload });
 
     recoveryHook.incrementGeneration();
 
@@ -578,6 +578,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         sessionKey: currentSessionRef.current,
         text,
         images,
+        uploadPayload,
         idempotencyKey,
       });
 

@@ -7,11 +7,11 @@ import { SearchBar } from './SearchBar';
 import { useMessageSearch } from './useMessageSearch';
 import { ActivityLog, ChatHeader, ProcessingIndicator, ScrollToBottomButton, StreamingMessage, ToolGroupBlock } from './components';
 import { isMessageCollapsible } from './types';
-import type { ChatMsg, ImageAttachment } from './types';
+import type { ChatMsg, ImageAttachment, OutgoingUploadPayload } from './types';
 
 interface ChatPanelProps {
   messages: ChatMsg[];
-  onSend: (text: string, attachments?: ImageAttachment[]) => void;
+  onSend: (text: string, attachments?: ImageAttachment[], uploadPayload?: OutgoingUploadPayload) => void | Promise<void>;
   onAbort: () => void;
   isGenerating: boolean;
   stream: ChatStreamState;
